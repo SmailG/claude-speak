@@ -150,6 +150,24 @@ class QueueAgeLimitTest(unittest.TestCase):
     def test_no_length_limit_never_drops(self):
         self.assertEqual(queue_age_limit(0), math.inf)
 
+    def test_interrupt_wakes_a_waiting_worker(self):
+        import threading
+        board = make_board()
+        got = []
+        worker = threading.Thread(target=lambda: got.append(board.next_job(timeout=30)))
+        worker.start()
+        board.interrupt()
+        worker.join(timeout=5)
+        self.assertFalse(worker.is_alive())
+        self.assertEqual(got, [None])
+
+    def test_interrupt_is_consumed_once(self):
+        board = make_board()
+        board.interrupt()
+        self.assertIsNone(board.next_job(timeout=0))
+        job = board.submit("after", "A")
+        self.assertEqual(board.next_job(timeout=0).id, job.id)
+
     def test_ring_wraps_without_false_positives(self):
         ring = CancelRing.create(mp.get_context("spawn"))
         for job_id in range(1, RING_SIZE + 6):

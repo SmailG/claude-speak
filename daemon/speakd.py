@@ -3,7 +3,10 @@
 Keeps Kokoro (English) and OmniVoice (Bosnian/Croatian/Serbian, cloned voice) resident.
   POST /speak   Stop-hook JSON payload (last_assistant_message, session_id)
   POST /stop    UserPromptSubmit payload (session_id, prompt); empty body = stop everything
-  GET  /health  {"name", "version", "home", "ready"}; 200 when ready, 503 while loading
+  POST /prepare      start loading Whisper (voice input is about to record)
+  POST /transcribe   16-bit PCM WAV body -> {"text", "language"} (local Whisper; text is never logged)
+  GET  /health  {"name", "version", "home", "ready", "models", "sessions", ...}; 503 while loading
+  GET  /config  voice-input settings
 
 State lives in CLAUDE_SPEAK_HOME (the plugin's data dir): voices/, off, max_chars, speed,
 unload_minutes, speakd.log. Kokoro (English) stays loaded; OmniVoice (Bosnian) loads on first use and
@@ -13,32 +16,27 @@ unloads when idle or once no Claude Code session is open.
 import json
 import multiprocessing as mp
 import os
+import queue
 import threading
 import time
 import traceback
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import engines
+import stt
 from jobs import CancelRing, Job, JobBoard, queue_age_limit
 from models import ModelManager
 from sessions import SessionWatch
 from player import Player
+from settings import (HOME, MIN_SPEED, VOICES_DIR, char_limit, speech_speed, stt_language,
+                      unload_minutes)
 from text import CONTROL_MARKER, MERGE_TO, is_bosnian, parse_payload, prepare, split_chunks
 
-NAME, VERSION = "claude-speak", "0.3.0"
+NAME, VERSION = "claude-speak", "0.3.1"
 HOST, PORT = "127.0.0.1", int(os.environ.get("CLAUDE_SPEAK_PORT", "8765"))
-HOME = os.environ.get("CLAUDE_SPEAK_HOME") or os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-MAX_CHARS = int(os.environ.get("CLAUDE_SPEAK_MAX_CHARS", "2000"))
-LIMIT_FILE = os.path.join(HOME, "max_chars")  # written by `/speak limit N`; 0 = no limit
-SPEED_FILE = os.path.join(HOME, "speed")      # written by `/speak speed X`
-# Above 1.3 OmniVoice (Bosnian) stops outrunning playback, so speech stalls between chunks,
-# and at 1.5 its words get garbled (Whisper WER 6-30%). One range for both languages.
-MIN_SPEED, MAX_SPEED = 1.0, 1.3  # keep in sync with SPEED_RE in scripts/speakctl.sh
 LOG_PATH, LOG_MAX_BYTES = os.path.join(HOME, "speakd.log"), 512 * 1024
-
-VOICES_DIR = os.path.join(HOME, "voices")
-UNLOAD_FILE = os.path.join(HOME, "unload_minutes")  # written by `/speak unload N`; 0 = keep loaded
-DEFAULT_UNLOAD_MIN, MAX_UNLOAD_MIN = 10, 1440
+MAX_BODY_BYTES = 20 * 1024 * 1024
+TRANSCRIBE_TIMEOUT_S = 120
 HOUSEKEEPING_EVERY_S = 30  # session scan + idle sweep
 NO_SESSION_GRACE_S = 60    # /clear and restarts briefly show zero sessions
 
@@ -47,31 +45,11 @@ def short(session: str | None) -> str:
     return (session or "?")[:8]
 
 
-def char_limit() -> int:
-    """Per-reply limit: the /speak override file if valid, else MAX_CHARS."""
-    try:
-        with open(LIMIT_FILE, encoding="utf-8") as f:
-            return max(0, int(f.read().strip()))
-    except (OSError, ValueError):
-        return MAX_CHARS
+class WorkerTask:
+    """A function to run on the MLX worker thread, with its result handed back."""
 
-
-def speech_speed() -> float:
-    """Speaking-rate multiplier from the /speak speed file, clamped; 1.0 if missing or invalid."""
-    try:
-        with open(SPEED_FILE, encoding="utf-8") as f:
-            return min(MAX_SPEED, max(MIN_SPEED, float(f.read().strip())))
-    except (OSError, ValueError):
-        return MIN_SPEED
-
-
-def unload_minutes() -> int:
-    """Idle minutes before the Bosnian voice unloads (0 = never while a session is open)."""
-    try:
-        with open(UNLOAD_FILE, encoding="utf-8") as f:
-            return min(MAX_UNLOAD_MIN, max(0, int(f.read().strip())))
-    except (OSError, ValueError):
-        return DEFAULT_UNLOAD_MIN
+    def __init__(self, fn):
+        self.fn, self.done, self.result, self.error = fn, threading.Event(), None, None
 
 
 def trim_log() -> None:
@@ -94,8 +72,10 @@ class Speaker:
         ring = CancelRing.create(ctx)
         self.board = JobBoard(ring)
         self.player = Player(ring, ctx)
-        self.models = ModelManager({"en": engines.load_en, "bs": lambda: engines.load_bs(VOICES_DIR)},
+        self.models = ModelManager({"en": engines.load_en, "bs": lambda: engines.load_bs(VOICES_DIR),
+                                    "stt": lambda: stt.load(HOME)},
                                    resident=("en",), release=engines.release)
+        self._tasks: queue.SimpleQueue = queue.SimpleQueue()
         self.sessions = SessionWatch()
         self._next_housekeeping = 0.0
         self.ready = threading.Event()
@@ -117,6 +97,32 @@ class Speaker:
         if n:
             print(f"stop: session={short(session) if session else 'all'} cancelled={n}", flush=True)
 
+    def on_worker(self, fn, wait: bool = True):
+        """Run fn on the MLX worker thread ahead of queued speech; returns its result if wait."""
+        task = WorkerTask(fn)
+        self._tasks.put(task)
+        self.board.interrupt()
+        if not wait:
+            return None
+        if not task.done.wait(TRANSCRIBE_TIMEOUT_S):
+            raise TimeoutError("the speech worker did not answer in time")
+        if task.error is not None:
+            raise task.error
+        return task.result
+
+    def _run_tasks(self) -> None:
+        while True:
+            try:
+                task = self._tasks.get_nowait()
+            except queue.Empty:
+                return
+            try:
+                task.result = task.fn()
+            except Exception as e:  # handed to the waiting HTTP thread
+                task.error = e
+            finally:
+                task.done.set()
+
     def _load(self) -> None:
         list(self._synth("Ready.", False, MIN_SPEED))  # loads and warms up Kokoro
         self.ready.set()
@@ -135,6 +141,7 @@ class Speaker:
             print(f"{NAME}: model load failed; exiting (re-run /speak setup)", flush=True)
             os._exit(1)
         while True:
+            self._run_tasks()
             self._housekeeping()
             job = self.board.next_job(timeout=HOUSEKEEPING_EVERY_S)
             if job is None:
@@ -167,6 +174,7 @@ class Speaker:
         started = time.monotonic()
         synth_s = audio_s = 0.0
         for chunk in chunks:
+            self._run_tasks()  # a transcription waits at most one chunk
             if self.board.is_cancelled(job):
                 break
             chunk_t0 = time.monotonic()
@@ -184,7 +192,16 @@ class Speaker:
 def make_handler(speaker: Speaker):
     class Handler(BaseHTTPRequestHandler):
         def do_POST(self):
-            body = self.rfile.read(int(self.headers.get("Content-Length", 0) or 0))
+            length = int(self.headers.get("Content-Length", 0) or 0)
+            if length > MAX_BODY_BYTES:
+                return self._reply(413)
+            body = self.rfile.read(length)
+            if self.path == "/transcribe":
+                return self._transcribe(body)
+            if self.path == "/prepare":
+                speaker.on_worker(lambda: speaker.models.get("stt") if stt.is_installed(HOME) else None,
+                                  wait=False)
+                return self._reply(204)
             text, session, prompt = parse_payload(body)
             if self.path == "/speak":
                 speaker.speak(text.strip(), session)
@@ -194,14 +211,37 @@ def make_handler(speaker: Speaker):
                 return self._reply(404)
             self._reply(204)
 
+        def _transcribe(self, body: bytes):
+            try:
+                audio = stt.decode_wav(body)
+            except stt.BadAudio as e:
+                return self._json(400, {"error": str(e)})
+            lang, started = stt_language(), time.monotonic()
+            try:
+                result = speaker.on_worker(lambda: stt.transcribe(speaker.models.get("stt"), audio, lang))
+            except FileNotFoundError as e:
+                return self._json(503, {"error": str(e)})
+            except Exception as e:  # keep the service up; the caller shows the error
+                print(f"transcribe error: {e!r}", flush=True)
+                return self._json(500, {"error": "transcription failed; see speakd.log"})
+            print(f"transcribed {len(audio) / stt.WHISPER_RATE:.1f}s audio -> {len(result['text'])} chars "
+                  f"lang={result['language']} ({lang}) in {time.monotonic() - started:.1f}s", flush=True)
+            self._json(200, result)
+
         def do_GET(self):
+            if self.path == "/config":
+                return self._json(200, {"lang": stt_language(), "voice_input": stt.is_installed(HOME)})
             if self.path != "/health":
                 return self._reply(404)
             ready = speaker.ready.is_set()
             body = json.dumps({"name": NAME, "version": VERSION, "home": HOME, "ready": ready,
                                "models": speaker.models.loaded(), "unload_minutes": unload_minutes(),
+                               "voice_input": stt.is_installed(HOME),
                                "sessions": [x.tty for x in speaker.sessions.sessions]}).encode()
             self._reply(200 if ready else 503, body)
+
+        def _json(self, code: int, obj: dict):
+            self._reply(code, json.dumps(obj).encode())
 
         def _reply(self, code: int, body: bytes = b""):
             self.send_response(code)

@@ -2,7 +2,7 @@
 # Backend of the /speak skill.
 #   speakctl.sh "<args>" <session_id> <data_dir>
 #   args: (none) = replay this session's last reply | on | off | status | limit N | speed X
-#         | unload N | setup | uninstall
+#         | unload N | lang X | setup [input] | uninstall
 # The skill passes all its arguments as one string ($1); it is re-split here.
 # Every line starts with "[speak]": the daemon never speaks replies with that marker, so
 # Claude echoing this output can't interrupt a replay.
@@ -11,12 +11,13 @@ SESSION="${2:-}"
 DATA="${3:-${CLAUDE_PLUGIN_DATA:-}}"
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PORT="${CLAUDE_SPEAK_PORT:-8765}"
-DEFAULT_LIMIT=2000   # keep in sync with MAX_CHARS in daemon/speakd.py
+DEFAULT_LIMIT=2000   # keep in sync with MAX_CHARS in daemon/settings.py
 MAX_LIMIT=100000
-SPEED_RE='^1(\.([0-2][0-9]?|30?))?$'   # 1.0 .. 1.3, at most two decimals (MIN/MAX_SPEED in speakd.py)
+SPEED_RE='^1(\.([0-2][0-9]?|30?))?$'   # 1.0 .. 1.3, at most two decimals (MIN/MAX_SPEED in settings.py)
 EN_WPM=187           # English words per minute measured at speed 1
-DEFAULT_UNLOAD=10    # keep in sync with DEFAULT_UNLOAD_MIN in daemon/speakd.py
+DEFAULT_UNLOAD=10    # keep in sync with DEFAULT_UNLOAD_MIN in daemon/settings.py
 MAX_UNLOAD=1440
+LANG_RE='^(auto|bs|hr|sr|en)$'   # LANGUAGES in daemon/settings.py
 VERSION=$(jq -r '.version // "?"' "$ROOT/.claude-plugin/plugin.json" 2>/dev/null)
 
 say() { echo "[speak] $*"; }
@@ -26,6 +27,7 @@ MUTE="$DATA/off"
 LIMIT_FILE="$DATA/max_chars"
 SPEED_FILE="$DATA/speed"
 UNLOAD_FILE="$DATA/unload_minutes"
+LANG_FILE="$DATA/stt_lang"
 
 daemon_state() {
   health=$(curl -s --max-time 1 "http://127.0.0.1:$PORT/health" 2>/dev/null)
@@ -77,6 +79,13 @@ memory_state() {
   curl -s --max-time 1 "http://127.0.0.1:$PORT/health" 2>/dev/null | jq -r '
     select(.models != null)
     | "Bosnian voice \(if .models.bs then "loaded" else "not loaded" end) · \(.sessions | length) session\(if (.sessions | length) == 1 then "" else "s" end) open"' 2>/dev/null
+}
+
+lang_state() {
+  local v
+  v=$(cat "$LANG_FILE" 2>/dev/null)
+  [[ "$v" =~ $LANG_RE ]] || v=auto
+  echo "voice input language: $v"
 }
 
 # Last final-text reply of this session, from its transcript (works while muted and across
@@ -132,8 +141,17 @@ case "$ACTION" in
           else
             say "Usage: /speak unload N  (N = minutes idle before the Bosnian voice unloads, 0..$MAX_UNLOAD; 0 = keep loaded while a session is open). Currently: $(unload_state)"
           fi ;;
-  setup)  say "SETUP" ;;
+  lang)   if [[ "$VALUE" =~ $LANG_RE ]]; then
+            printf '%s\n' "$VALUE" > "$LANG_FILE"; say "Voice input language set: $VALUE"
+          else
+            say "Usage: /speak lang auto|bs|hr|sr|en  (auto lets Whisper detect it; short Bosnian clips may come back as Serbian in Cyrillic, so bs is safer). Currently: $(lang_state)"
+          fi ;;
+  setup)  case "$VALUE" in
+            "") say "SETUP" ;;
+            input) say "SETUP input" ;;
+            *) say "Usage: /speak setup  (speech)  or  /speak setup input  (local voice input, +1.5 GB)" ;;
+          esac ;;
   uninstall) bash "$ROOT/scripts/uninstall.sh" "$DATA" | sed 's/^/[speak] /' ;;
-  *)      say "Unknown option '$ACTION'. Use: /speak (replay) | on | off | status | limit N | speed X | unload N | setup | uninstall" ;;
+  *)      say "Unknown option '$ACTION'. Use: /speak (replay) | on | off | status | limit N | speed X | unload N | lang X | setup [input] | uninstall" ;;
 esac
 exit 0

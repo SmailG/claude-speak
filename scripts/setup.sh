@@ -1,10 +1,12 @@
 #!/bin/bash
 # claude-speak setup: install the speech runtime, download voice models, start the daemon.
-#   setup.sh <data_dir>       (the /speak skill passes ${CLAUDE_PLUGIN_DATA})
+#   setup.sh <data_dir>         speech output (the /speak skill passes ${CLAUDE_PLUGIN_DATA})
+#   setup.sh <data_dir> input   add local voice input (Whisper, ~1.5 GB) to an existing setup
 # Idempotent and safe to re-run: installs are skipped when present, downloads resume.
 set -euo pipefail
 
 DATA="${1:-${CLAUDE_PLUGIN_DATA:-}}"
+MODE="${2:-speech}"
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # shellcheck source=platform.sh
 source "$ROOT/scripts/platform.sh"
@@ -55,6 +57,38 @@ hf_hub_download("prince-canuma/Kokoro-82M", "voices/af_heart.safetensors")  # re
 snapshot_download("mlx-community/OmniVoice-bfloat16")       # Bosnian/Croatian/Serbian model
 print("models ready")
 PY
+}
+
+install_whisper() {
+  step "downloading the Whisper speech-to-text model (~1.5 GB on first run; resumes if interrupted)"
+  "$PY" - "$DATA/models/whisper" <<'PY'
+import os, shutil, sys
+from huggingface_hub import hf_hub_download, snapshot_download
+dest = sys.argv[1]
+os.makedirs(dest, exist_ok=True)
+# The MLX weights ship without a tokenizer; the tokenizer comes from the original OpenAI repo.
+weights = snapshot_download("mlx-community/whisper-large-v3-turbo")
+for name in ("config.json", "weights.safetensors"):
+    link = os.path.join(dest, name)
+    if os.path.lexists(link):
+        os.remove(link)
+    os.symlink(os.path.join(weights, name), link)
+for name in ("tokenizer.json", "tokenizer_config.json", "vocab.json", "merges.txt", "normalizer.json",
+             "added_tokens.json", "special_tokens_map.json", "preprocessor_config.json",
+             "generation_config.json"):
+    shutil.copy(hf_hub_download("openai/whisper-large-v3-turbo", name), os.path.join(dest, name))
+print("whisper ready")
+PY
+}
+
+check_voice_input() {
+  local health
+  health=$(curl -s --max-time 2 "http://127.0.0.1:$PORT/health" || true)
+  [ "$(printf '%s' "$health" | jq -r '.home' 2>/dev/null)" = "$DATA" ] \
+    || fail "the speech service isn't running from this install; run /speak setup first"
+  [ "$(curl -s --max-time 2 "http://127.0.0.1:$PORT/config" | jq -r '.voice_input' 2>/dev/null)" = "true" ] \
+    || fail "the service doesn't see the Whisper model in $DATA/models/whisper; see $DATA/speakd.log"
+  step "voice input is ready: the model loads on first use and unloads like the Bosnian voice"
 }
 
 install_files() {
@@ -122,7 +156,14 @@ start_daemon() {
 
 check_prereqs
 install_runtime
-download_models
-install_files
-write_plist
-start_daemon
+case "$MODE" in
+  speech)
+    download_models
+    install_files
+    write_plist
+    start_daemon ;;
+  input)
+    install_whisper
+    check_voice_input ;;
+  *) fail "unknown setup mode '$MODE' (use: setup.sh <data_dir> [input])" ;;
+esac

@@ -90,6 +90,7 @@ class JobBoard:
         self.ring, self.clock, self.max_age_s = ring, clock, max_age_s
         self._cond = threading.Condition()
         self._queue: deque[Job] = deque()
+        self._interrupted = False
         self._live: dict[int, Job] = {}  # queued, generating, or generated but maybe still playing
         self._plays_until: dict[int, float] = {}  # generated job id -> estimated end of its audio
         self._player_busy_until = 0.0
@@ -117,11 +118,21 @@ class JobBoard:
         with self._cond:
             return self._cancel_where(lambda j: True)
 
+    def interrupt(self) -> None:
+        """Make a waiting next_job() return None now (other work is waiting for the worker)."""
+        with self._cond:
+            self._interrupted = True
+            self._cond.notify_all()
+
     def next_job(self, timeout: float | None = None) -> Job | None:
-        """Block until a live, fresh job is queued; stale ones are cancelled and skipped."""
+        """Block until a live, fresh job is queued; stale ones are cancelled and skipped.
+        Returns None on timeout or interrupt()."""
         with self._cond:
             deadline = None if timeout is None else self.clock() + timeout
             while True:
+                if self._interrupted:
+                    self._interrupted = False
+                    return None
                 while self._queue:
                     job = self._queue.popleft()
                     if job.id in self.ring:
