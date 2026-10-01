@@ -25,7 +25,8 @@ class H(http.server.BaseHTTPRequestHandler):
         body = self.rfile.read(int(self.headers.get("Content-Length", 0) or 0)).decode()
         open(log, "a").write(f"{self.path} {body}\n"); self.send_response(204); self.end_headers()
     def do_GET(self):
-        b = json.dumps({"name": "claude-speak", "version": "t", "home": home, "ready": True}).encode()
+        b = json.dumps({"name": "claude-speak", "version": "t", "home": home, "ready": True,
+                        "models": {"en": True, "bs": False}, "sessions": ["ttys001", "ttys002"]}).encode()
         self.send_response(200); self.send_header("Content-Length", str(len(b))); self.end_headers(); self.wfile.write(b)
     def log_message(self, *a): pass
 http.server.ThreadingHTTPServer(("127.0.0.1", port), H).serve_forever()
@@ -79,6 +80,18 @@ check "no injection via speed" "no" "$([ -e "$TMP/pwned2" ] && echo yes || echo 
 check "status shows speed" "1" "$(ctl status | grep -c 'speed 1.3x (~243 wpm in English)')"
 echo garbage > "$DATA/speed"
 check "corrupt speed file reads as 1x" "1" "$(ctl status | grep -c 'speed 1x')"
+for good in "0:0" "10:10" "1440:1440" "007:7"; do
+  ctl "unload ${good%%:*}" >/dev/null
+  check "unload accepts ${good%%:*}" "${good##*:}" "$(cat "$DATA/unload_minutes")"
+done
+for bad in "unload" "unload -1" "unload 1441" "unload 2.5" "unload abc" "unload 5; touch $TMP/pwned3"; do
+  ctl "$bad" >/dev/null
+  check "rejects '$bad'" "7" "$(cat "$DATA/unload_minutes")"
+done
+check "no injection via unload" "no" "$([ -e "$TMP/pwned3" ] && echo yes || echo no)"
+check "status shows memory state" "1" "$(ctl status | grep -c 'Bosnian voice not loaded · 2 sessions open — Bosnian voice unloads after 7 min idle')"
+ctl "unload 0" >/dev/null
+check "status shows keep-loaded" "1" "$(ctl status | grep -c 'kept loaded while a session is open')"
 check "status names plugin" "1" "$(ctl status | grep -c '^\[speak\] claude-speak ')"
 check "status sees own daemon" "1" "$(ctl status | grep -c 'service running')"
 check "unknown option" "1" "$(ctl bogus | grep -c 'Unknown option')"

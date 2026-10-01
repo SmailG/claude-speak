@@ -1,7 +1,7 @@
 ---
 name: speak
-description: Replay the last reply aloud, turn spoken replies on or off, set the length limit or speaking speed, show status, or set up / uninstall the local speech service
-argument-hint: "[on|off|status|limit N|speed X|setup|uninstall]  (no argument = replay last reply)"
+description: Replay the last reply aloud, turn spoken replies on or off, set the length limit, speaking speed or when the Bosnian voice unloads, show status, or set up / uninstall the local speech service
+argument-hint: "[on|off|status|limit N|speed X|unload N|setup|uninstall]  (no argument = replay last reply)"
 disable-model-invocation: true
 allowed-tools: Bash(bash "${CLAUDE_PLUGIN_ROOT}/scripts/speakctl.sh" *) Bash(bash "${CLAUDE_PLUGIN_ROOT}/scripts/setup.sh" *)
 ---
