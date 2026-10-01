@@ -7,6 +7,7 @@ generator writes to a Pipe synchronously, and all playback work (a reader thread
 writes with a larger buffer) lives in this child process with its own GIL.
 """
 
+import os
 import queue
 import threading
 import time
@@ -20,7 +21,10 @@ BLOCK_S = 0.1     # write granularity, also the cancel reaction time
 
 def _reader(conn: Any, local: queue.Queue) -> None:
     while True:
-        local.put(conn.recv())
+        try:
+            local.put(conn.recv())
+        except (EOFError, OSError):  # speakd is gone (restart, update, kill): don't linger as an orphan
+            os._exit(0)
 
 
 def player_main(conn: Any, ring_ids: Any, ring_cursor: Any) -> None:
