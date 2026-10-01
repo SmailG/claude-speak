@@ -97,6 +97,27 @@ check "fresh session: nothing to replay" "1" "$(ctl "" "9999bbbb-0000-0000-0000-
 check "fresh session: nothing sent" "0" "$(requests)"
 check "bad session id rejected" "1" "$(ctl "" '../../etc' | grep -c 'Nothing to replay')"
 
+# --- platform.sh: stubbed uname / sysctl / sw_vers, so every case runs on any OS
+STUBS="$TMP/stubs"; mkdir -p "$STUBS"
+printf '#!/bin/sh\n[ "$1" = "-s" ] && echo "$FAKE_OS" || echo "$FAKE_ARCH"\n' > "$STUBS/uname"
+printf '#!/bin/sh\ncase "$2" in hw.optional.arm64) echo "$FAKE_ARM64";; sysctl.proc_translated) echo "$FAKE_TRANSLATED";; esac\n' > "$STUBS/sysctl"
+printf '#!/bin/sh\necho "$FAKE_MACOS"\n' > "$STUBS/sw_vers"
+chmod +x "$STUBS"/*
+on() {  # on <os> <uname -m> <hw.optional.arm64> <proc_translated> <macOS> <shell code>
+  FAKE_OS=$1 FAKE_ARCH=$2 FAKE_ARM64=$3 FAKE_TRANSLATED=$4 FAKE_MACOS=$5 PATH="$STUBS:$PATH" \
+    bash -c "source '$ROOT/scripts/platform.sh'; $6"
+}
+check "platform: Apple Silicon, macOS 14.0" "" "$(on Darwin arm64 1 0 14.0 platform_problem)"
+check "platform: Apple Silicon, macOS 26.5" "" "$(on Darwin arm64 1 0 26.5 platform_problem)"
+check "platform: Rosetta shell is still Apple Silicon" "" "$(on Darwin x86_64 1 1 26.5 platform_problem)"
+check "platform: Rosetta detected" "yes" "$(on Darwin x86_64 1 1 26.5 'is_translated && echo yes || echo no')"
+check "platform: native is not translated" "no" "$(on Darwin arm64 1 0 26.5 'is_translated && echo yes || echo no')"
+check "platform: macOS 13 refused" "1" "$(on Darwin arm64 1 0 13.6.1 platform_problem | grep -c 'macOS 14 Sonoma or newer; this is macOS 13.6.1')"
+check "platform: unknown macOS refused" "1" "$(on Darwin arm64 1 0 '' platform_problem | grep -c 'this is macOS unknown')"
+check "platform: Intel Mac refused" "1" "$(on Darwin x86_64 0 0 15.7 platform_problem | grep -c 'MLX does not run on Intel')"
+check "platform: Intel Mac without the arm64 key refused" "1" "$(on Darwin x86_64 '' '' 15.7 platform_problem | grep -c 'Intel')"
+check "platform: Linux refused" "1" "$(on Linux x86_64 '' '' '' platform_problem | grep -c 'this is Linux')"
+
 # --- sync.sh: restarts the service only when daemon sources changed, and only for its own install
 if [ -x /usr/libexec/PlistBuddy ]; then
   SH="$TMP/synchome"; SD="$TMP/syncdata"; BIN="$TMP/bin"; KICKS="$TMP/kicks.log"

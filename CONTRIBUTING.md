@@ -12,6 +12,7 @@ privately, as described in [SECURITY.md](SECURITY.md). Pull requests use the tem
 | `hooks/sync.sh` | SessionStart: copy new daemon code into the data dir after an update |
 | `skills/speak/SKILL.md`, `scripts/speakctl.sh` | The `/speak` command |
 | `scripts/setup.sh`, `scripts/uninstall.sh` | Install / remove the runtime, models and launchd service |
+| `scripts/platform.sh` | Apple Silicon / macOS version / Rosetta checks used by setup |
 | `daemon/` | `speakd.py` (HTTP + MLX engine), `player.py` (playback process), `jobs.py` (queueing), `text.py` (cleanup, routing, chunking) |
 
 ## Rules

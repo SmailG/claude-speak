@@ -22,7 +22,9 @@ Setup installs the `mlx-audio` runtime as a [uv](https://docs.astral.sh/uv/) too
 voice models (about 4.5 GB, once), and registers a small launchd service that keeps them loaded.
 Re-running it is safe. When it finishes you hear "Speech is ready."
 
-**Requirements:** macOS on Apple Silicon, `uv`, `jq`, `curl`, ~5 GB disk, ~3 GB free memory.
+**Requirements:** an Apple Silicon Mac (M1 or later) with macOS 14 Sonoma or newer, `uv`, `jq`,
+`curl`, ~5 GB disk, ~3 GB free memory. Intel Macs are not supported: the speech models run on MLX,
+which needs Apple Silicon. Setup also works from a terminal running under Rosetta.
 
 ## Use
 
