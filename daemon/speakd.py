@@ -6,8 +6,9 @@ Keeps Kokoro (English) and OmniVoice (Bosnian/Croatian/Serbian, cloned voice) re
   POST /prepare      start loading Whisper (voice input is about to record)
   POST /transcribe   16-bit PCM WAV body -> {"text", "language"} (local Whisper; text is never logged)
   POST /guard?tty=X  hook JSON: a session opened or closed a menu that typing would answer
+                     (needs the X-Claude-Speak-Hook header, which a web page can't send cross-origin)
   GET  /health  {"name", "version", "home", "ready", "models", "sessions", "guarded", ...}; 503 while loading
-/speak and /stop also take ?tty=X: a reply or a prompt means that session's menus are closed.
+/speak and /stop also take ?tty=X (with that header): a reply or a prompt closes that session's menus.
   GET  /config  voice-input settings
 
 State lives in CLAUDE_SPEAK_HOME (the plugin's data dir): voices/, off, max_chars, speed,
@@ -41,6 +42,7 @@ HOST, PORT = "127.0.0.1", int(os.environ.get("CLAUDE_SPEAK_PORT", "8765"))
 LOG_PATH, LOG_MAX_BYTES = os.path.join(HOME, "speakd.log"), 512 * 1024
 MAX_BODY_BYTES = 20 * 1024 * 1024
 TRANSCRIBE_TIMEOUT_S = 120
+HOOK_HEADER = "X-Claude-Speak-Hook"
 HOUSEKEEPING_EVERY_S = 30  # session scan + idle sweep
 NO_SESSION_GRACE_S = 60    # /clear and restarts briefly show zero sessions
 
@@ -81,7 +83,7 @@ class Speaker:
                                    resident=("en",), release=engines.release)
         self._tasks: queue.SimpleQueue = queue.SimpleQueue()
         self.sessions = SessionWatch()
-        self.guard = PromptGuard()
+        self.guard = PromptGuard(os.path.join(HOME, "guard.json"))
         self._next_housekeeping = 0.0
         self.ready = threading.Event()
         threading.Thread(target=self._generate_loop, daemon=True).start()
@@ -203,7 +205,7 @@ def make_handler(speaker: Speaker):
             body = self.rfile.read(length)
             path, _, query = self.path.partition("?")
             tty = parse_qs(query).get("tty", [None])[0]
-            tty = tty if is_tty(tty) else None
+            tty = tty if is_tty(tty) and self.headers.get(HOOK_HEADER) == "1" else None
             if path == "/transcribe":
                 return self._transcribe(body)
             if path == "/guard":
@@ -256,11 +258,12 @@ def make_handler(speaker: Speaker):
             if self.path != "/health":
                 return self._reply(404)
             ready = speaker.ready.is_set()
+            speaker.sessions.refresh()  # the hotkey helper must not act on a session that just closed
+            ttys = [x.tty for x in speaker.sessions.sessions]
             body = json.dumps({"name": NAME, "version": VERSION, "home": HOME, "ready": ready,
                                "models": speaker.models.loaded(), "unload_minutes": unload_minutes(),
                                "voice_input": stt.is_installed(HOME),
-                               "sessions": [x.tty for x in speaker.sessions.sessions],
-                               "guarded": speaker.guard.guarded()}).encode()
+                               "sessions": ttys, "guarded": speaker.guard.guarded(ttys)}).encode()
             self._reply(200 if ready else 503, body)
 
         def _json(self, code: int, obj: dict):

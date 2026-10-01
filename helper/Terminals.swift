@@ -32,7 +32,7 @@ final class Terminals {
                 repeat with w in windows
                   repeat with tb in tabs of w
                     repeat with s in sessions of tb
-                      if tty of s is ttyName then
+                      if tty of s is ("/dev/" & ttyName) then
                         tell s to write text t newline NO
                         return "ok"
                       end if

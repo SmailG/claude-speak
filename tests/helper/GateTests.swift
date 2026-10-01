@@ -57,16 +57,25 @@ func hotkeyTests() {
 func deliveryTests() {
     check("tty from device path", "ttys009", ttyName("/dev/ttys009\n"))
     check("non-tty rejected", nil, ttyName("/dev/null"))
-    check("iTerm2 types even after a tab switch", Delivery.type,
-          delivery(app: .iTerm2, tty: "ttys009", guarded: [], frontTTYNow: "ttys010"))
+    let ok = DeliveryState(sessions: ["ttys009", "ttys010"], guarded: [], frontApp: .terminal, frontTTY: "ttys009")
+    func with(_ change: (inout DeliveryState) -> Void) -> DeliveryState {
+        var s = ok
+        change(&s)
+        return s
+    }
+    check("iTerm2 types even after switching apps and tabs", Delivery.type,
+          delivery(app: .iTerm2, tty: "ttys009", now: with { $0.frontApp = nil; $0.frontTTY = "ttys010" }))
     check("guarded session gets clipboard", Delivery.clipboard,
-          delivery(app: .iTerm2, tty: "ttys009", guarded: ["ttys009"], frontTTYNow: "ttys009"))
+          delivery(app: .iTerm2, tty: "ttys009", now: with { $0.guarded = ["ttys009"] }))
     check("other session guarded: still types", Delivery.type,
-          delivery(app: .iTerm2, tty: "ttys009", guarded: ["ttys010"], frontTTYNow: "ttys009"))
-    check("Terminal front tab: types", Delivery.type,
-          delivery(app: .terminal, tty: "ttys009", guarded: [], frontTTYNow: "ttys009"))
+          delivery(app: .iTerm2, tty: "ttys009", now: with { $0.guarded = ["ttys010"] }))
+    check("Claude Code exited meanwhile: clipboard", Delivery.clipboard,
+          delivery(app: .iTerm2, tty: "ttys009", now: with { $0.sessions = ["ttys010"] }))
+    check("Terminal active, same tab: types", Delivery.type, delivery(app: .terminal, tty: "ttys009", now: ok))
     check("Terminal tab switched: clipboard", Delivery.clipboard,
-          delivery(app: .terminal, tty: "ttys009", guarded: [], frontTTYNow: "ttys010"))
+          delivery(app: .terminal, tty: "ttys009", now: with { $0.frontTTY = "ttys010" }))
+    check("Terminal no longer the active app: clipboard", Delivery.clipboard,
+          delivery(app: .terminal, tty: "ttys009", now: with { $0.frontApp = nil }))
 }
 
 func sanitizeTests() {
@@ -76,6 +85,8 @@ func sanitizeTests() {
     check("inner slash kept", "use a/b", sanitizeTranscript("use a/b"))
     check("Bosnian letters kept", "Šta je ovo, čemu služi?", sanitizeTranscript("Šta je ovo, čemu služi?"))
     check("only noise is empty", "", sanitizeTranscript(" \n#\t"))
+    check("unicode spaces can't hide a slash", "compact", sanitizeTranscript("\u{00A0}\u{3000}/compact"))
+    check("bidi override removed", "a b", sanitizeTranscript("a\u{202E}b"))
 }
 
 func wavTests() {

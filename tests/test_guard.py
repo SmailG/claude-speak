@@ -1,19 +1,12 @@
 import os
 import sys
+import tempfile
 import unittest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "daemon"))
-from guard import MAX_AGE_S, PromptGuard, is_tty  # noqa: E402
+from guard import PromptGuard, is_tty  # noqa: E402
 
 TTY = "ttys009"
-
-
-class FakeClock:
-    def __init__(self):
-        self.now = 1000.0
-
-    def __call__(self):
-        return self.now
 
 
 def ev(name, tool="Bash", tool_input=None):
@@ -23,8 +16,7 @@ def ev(name, tool="Bash", tool_input=None):
 
 class PromptGuardTest(unittest.TestCase):
     def setUp(self):
-        self.clock = FakeClock()
-        self.g = PromptGuard(clock=self.clock)
+        self.g = PromptGuard()
 
     def test_permission_prompt_guards_until_that_call_finishes(self):
         self.g.event(TTY, ev("PermissionRequest"))
@@ -49,6 +41,12 @@ class PromptGuardTest(unittest.TestCase):
         self.g.event(TTY, ev("PostToolUse", "AskUserQuestion", {**q, "answers": {"Which?": "A"}}))
         self.assertEqual(self.g.guarded(), [])
 
+    def test_mcp_form_guards_until_answered(self):
+        self.g.event(TTY, {"hook_event_name": "Elicitation", "mcp_server_name": "x"})
+        self.assertEqual(self.g.guarded(), [TTY])
+        self.g.event(TTY, {"hook_event_name": "ElicitationResult", "mcp_server_name": "x"})
+        self.assertEqual(self.g.guarded(), [])
+
     def test_pretooluse_of_an_ordinary_tool_is_not_a_prompt(self):
         self.g.event(TTY, ev("PreToolUse"))
         self.assertEqual(self.g.guarded(), [])
@@ -64,19 +62,39 @@ class PromptGuardTest(unittest.TestCase):
         self.g.event(TTY, {"hook_event_name": "Stop"})
         self.assertEqual(self.g.guarded(), [])
 
-    def test_a_forgotten_prompt_expires(self):
+    def test_an_old_prompt_stays_guarded_while_its_session_is_open(self):
         self.g.event(TTY, ev("PermissionRequest"))
-        self.clock.now += MAX_AGE_S - 1
-        self.assertEqual(self.g.guarded(), [TTY])
-        self.clock.now += 2
+        self.assertEqual(self.g.guarded(open_ttys=[TTY, "ttys010"]), [TTY])
+
+    def test_a_closed_session_drops_its_prompts(self):
+        self.g.event(TTY, ev("PermissionRequest"))
+        self.assertEqual(self.g.guarded(open_ttys=["ttys010"]), [])
+
+    def test_malformed_events_are_ignored(self):
+        self.g.event(TTY, {"hook_event_name": ["PermissionRequest"], "tool_name": "Bash"})
+        self.g.event(TTY, {"hook_event_name": "PermissionRequest", "tool_name": {"x": 1}})
         self.assertEqual(self.g.guarded(), [])
+
+    def test_open_prompts_survive_a_restart(self):
+        path = os.path.join(tempfile.mkdtemp(), "guard.json")
+        PromptGuard(path).event(TTY, ev("PermissionRequest"))
+        restarted = PromptGuard(path)
+        self.assertEqual(restarted.guarded(), [TTY])
+        restarted.event(TTY, ev("PostToolUse"))
+        self.assertEqual(PromptGuard(path).guarded(), [])
+
+    def test_a_corrupt_state_file_starts_empty(self):
+        path = os.path.join(tempfile.mkdtemp(), "guard.json")
+        with open(path, "w") as f:
+            f.write("{not json")
+        self.assertEqual(PromptGuard(path).guarded(), [])
 
 
 class IsTtyTest(unittest.TestCase):
     def test_accepts_terminal_names_only(self):
         self.assertTrue(is_tty("ttys009"))
-        for bad in ("", None, "??", "ttys009; rm", "../ttys1", "console"):
-            self.assertFalse(is_tty(bad), bad)
+        for bad in ("", None, "??", "ttys009\n", "ttys009; rm", "../ttys1", "console", 7):
+            self.assertFalse(is_tty(bad), repr(bad))
 
 
 if __name__ == "__main__":

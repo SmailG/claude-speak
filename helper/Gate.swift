@@ -107,20 +107,30 @@ func ttyName(_ path: String) -> String? {
 
 enum Delivery: Equatable { case type, clipboard }
 
-/// Where a finished transcript goes. Never typed into a session showing a menu (a permission
-/// prompt or a question), where "yes" or "2" would answer it. Terminal.app can only paste into
-/// its front tab, so if the user switched tabs the text goes to the clipboard instead.
-func delivery(app: TerminalApp, tty: String, guarded: [String], frontTTYNow: String?) -> Delivery {
-    if guarded.contains(tty) { return .clipboard }
-    if app == .terminal && frontTTYNow != tty { return .clipboard }
+/// What is true at the moment the transcript is ready.
+struct DeliveryState {
+    var sessions: [String]       // ttys still running Claude Code
+    var guarded: [String]        // ttys showing a menu
+    var frontApp: TerminalApp?   // the active app, if it's a supported terminal
+    var frontTTY: String?        // Terminal.app's front tab
+}
+
+/// Where a finished transcript goes. Typed only into a tab that still runs Claude Code and shows
+/// no menu (a permission prompt or question, where "yes" or "2" would answer it). iTerm2 types
+/// into the session by its tty. Terminal.app can only paste with keystrokes, which go to the
+/// active app, so it must still be active with the same tab in front. Otherwise: the clipboard.
+func delivery(app: TerminalApp, tty: String, now: DeliveryState) -> Delivery {
+    if !now.sessions.contains(tty) || now.guarded.contains(tty) { return .clipboard }
+    if app == .terminal && (now.frontApp != .terminal || now.frontTTY != tty) { return .clipboard }
     return .type
 }
 
-/// Make a transcript safe to type into Claude Code: control characters (newlines that would
-/// submit, escape sequences) become spaces, and a leading "/", "!", "#" or "?" (a command, shell
-/// mode, memory, help) is dropped.
+/// Make a transcript safe to type into Claude Code: control and format characters (newlines that
+/// would submit, escape sequences) and any Unicode space become plain spaces, and a leading "/",
+/// "!", "#" or "?" (a command, shell mode, memory, help) is dropped.
 func sanitizeTranscript(_ text: String) -> String {
-    let scalars = text.unicodeScalars.map { CharacterSet.controlCharacters.contains($0) ? " " : Character($0) }
+    let blank = CharacterSet.controlCharacters.union(.whitespacesAndNewlines)
+    let scalars = text.unicodeScalars.map { blank.contains($0) ? " " : Character($0) }
     var clean = String(scalars).split(separator: " ", omittingEmptySubsequences: true).joined(separator: " ")
     while let first = clean.first, "/!#?".contains(first) {
         clean = String(clean.dropFirst()).trimmingCharacters(in: .whitespaces)

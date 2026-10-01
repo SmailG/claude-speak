@@ -21,9 +21,12 @@ enum Permissions {
 
     static var accessibility: Bool { AXIsProcessTrusted() }
 
-    static func requestMicrophone() {
+    static func requestMicrophone(then done: @escaping @Sendable () -> Void = {}) {
         guard AVCaptureDevice.authorizationStatus(for: .audio) == .notDetermined else { return }
-        AVCaptureDevice.requestAccess(for: .audio) { granted in log("microphone \(granted ? "granted" : "denied")") }
+        AVCaptureDevice.requestAccess(for: .audio) { granted in
+            log("microphone \(granted ? "granted" : "denied")")
+            DispatchQueue.main.async(execute: done)
+        }
     }
 
     static func askAccessibility() {

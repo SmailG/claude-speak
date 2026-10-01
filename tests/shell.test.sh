@@ -46,6 +46,10 @@ check "tty param is a terminal name or empty" "1" "$(grep -cE '^/speak\?tty=(tty
 check "stop forwards payload with session" "s1" "$(grep -m1 '^/stop?' "$LOG" | cut -d' ' -f2- | jq -r .session_id)"
 : > "$LOG"; echo '{"hook_event_name":"PermissionRequest","tool_name":"Bash"}' | CLAUDE_CODE_ENTRYPOINT=cli CLAUDE_PLUGIN_DATA=$DATA bash "$TTS" guard
 check "guard forwards the hook event" "PermissionRequest" "$(grep -m1 '^/guard?' "$LOG" | cut -d' ' -f2- | jq -r .hook_event_name)"
+: > "$LOG"; echo '{"hook_event_name":"PostToolUse","tool_name":"Read","tool_input":{"file_path":"/x"},"tool_response":"BIG"}' \
+  | CLAUDE_CODE_ENTRYPOINT=cli CLAUDE_PLUGIN_DATA=$DATA bash "$TTS" guard
+check "guard sends the call, not its output" '{"hook_event_name":"PostToolUse","tool_name":"Read","tool_input":{"file_path":"/x"}}' \
+  "$(grep -m1 '^/guard?' "$LOG" | cut -d' ' -f2-)"
 if [ "$(uname)" = Darwin ]; then  # a real terminal: the tty of the process that ran the hook
   : > "$LOG"; script -q /dev/null bash -c "echo '{}' | CLAUDE_CODE_ENTRYPOINT=cli CLAUDE_PLUGIN_DATA=$DATA bash '$TTS' guard" </dev/null >/dev/null
   check "guard reports the session's tty" "1" "$(grep -cE '^/guard\?tty=ttys[0-9]+ ' "$LOG")"
@@ -136,7 +140,9 @@ check "no injection via autosend" "no" "$([ -e "$TMP/pwned6" ] && echo yes || ec
 check "status: no voice-input line before setup input" "0" "$(ctl status | grep -c 'Voice input')"
 mkdir -p "$DATA/models/whisper"; touch "$DATA/models/whisper/config.json"
 check "status: helper not running" "1" "$(ctl status | grep -c 'Voice input: double-tap right-option · autosend on · language en · hotkey helper not running')"
-touch "$TMP/agent_up"; echo '{"input_monitoring":true,"microphone":"not asked"}' > "$DATA/hotkey_status.json"
+touch "$TMP/agent_up"
+check "status: no status file is not 'ready'" "1" "$(ctl status | grep -c 'helper state unknown')"
+echo '{"input_monitoring":true,"microphone":"not asked"}' > "$DATA/hotkey_status.json"
 check "status: missing permission named" "1" "$(ctl status | grep -c 'needs Microphone (System Settings')"
 echo '{"input_monitoring":true,"microphone":"granted"}' > "$DATA/hotkey_status.json"
 check "status: helper ready" "1" "$(ctl status | grep -c 'language en · ready$')"
@@ -196,18 +202,26 @@ if [ -x /usr/libexec/PlistBuddy ]; then
   echo "# old" >> "$SD/daemon/text.py"; sync_run
   check "sync: changed source restarts once" "1" "$(kicks)"
   check "sync: changed source is copied" "0" "$(cmp -s "$ROOT/daemon/text.py" "$SD/daemon/text.py"; echo $?)"
-  if command -v swiftc >/dev/null; then  # the hotkey helper: built once, then left alone
+  boots() { cat "$KICKS" 2>/dev/null | grep -c bootstrap; }
+  if xcode-select -p >/dev/null 2>&1 && xcrun --find swiftc >/dev/null 2>&1; then  # the hotkey helper
+    out=$(HOME="$TMP/buildhome" PATH="$BIN:$PATH" bash "$ROOT/scripts/build-helper.sh" "$TMP/builddata" 2>&1); rc=$?
+    check "build-helper: a good build exits 0" "0" "$rc"
+    check "build-helper: reports the build" "1" "$(printf '%s' "$out" | grep -c '^built ')"
+    check "build-helper: leaves no lock" "0" "$(ls -a "$TMP/builddata" | grep -c lock)"
+    mkdir "$TMP/builddata/.hotkey-build.lock"
+    check "build-helper: a running build is left alone" "1" \
+      "$(HOME="$TMP/buildhome" PATH="$BIN:$PATH" bash "$ROOT/scripts/build-helper.sh" "$TMP/builddata" | grep -c 'another hotkey helper build')"
+    rmdir "$TMP/builddata/.hotkey-build.lock"; KB=$(boots)
     HP="$SH/Library/LaunchAgents/com.claude-speak.hotkey.plist"
     /usr/libexec/PlistBuddy -c "Add :ProgramArguments array" -c "Add :ProgramArguments:0 string x" \
       -c "Add :ProgramArguments:1 string $SD" "$HP" >/dev/null
-    boots() { cat "$KICKS" 2>/dev/null | grep -c bootstrap; }
     sync_run
     check "sync: hotkey helper built" "1" "$(ls "$SH/Applications/Claude Speak Hotkey.app/Contents/MacOS" 2>/dev/null | grep -c ClaudeSpeakHotkey)"
-    check "sync: hotkey helper started" "1" "$(boots)"
-    sync_run; check "sync: unchanged helper is not rebuilt or restarted" "1" "$(boots)"
+    check "sync: hotkey helper started" "$((KB + 1))" "$(boots)"
+    sync_run; check "sync: unchanged helper is not rebuilt or restarted" "$((KB + 1))" "$(boots)"
     rm -f "$HP"
   else
-    echo "SKIP: 3 hotkey helper sync checks (no swiftc)"
+    echo "SKIP: 7 hotkey helper checks (no Swift compiler)"
   fi
   rm "$SH/Library/LaunchAgents/com.claude-speak.daemon.plist"; plist "/some/other/install"
   echo "# old" >> "$SD/daemon/text.py"; sync_run

@@ -13,6 +13,7 @@ final class Recorder {
     private var startedAt = Date()
     private var lastSpeechAt = Date()
     private var autoStopSent = false
+    private(set) var heardSpeech = false  // any buffer above speechLevel: worth transcribing
     private(set) var sampleRate = 48000
 
     /// Called once on the main queue when silence or the time cap ends the recording.
@@ -26,11 +27,17 @@ final class Recorder {
         startedAt = Date()
         lastSpeechAt = startedAt
         autoStopSent = false
+        heardSpeech = false
         input.installTap(onBus: 0, bufferSize: 4096, format: format) { [weak self] buffer, _ in
             self?.append(buffer)
         }
         engine.prepare()
-        try engine.start()
+        do {
+            try engine.start()
+        } catch {
+            input.removeTap(onBus: 0)  // a second installTap on the bus would crash the next try
+            throw error
+        }
     }
 
     /// Stops and returns the recording as a 16-bit mono WAV at the device's sample rate.
@@ -52,7 +59,10 @@ final class Recorder {
         samples += chunk
         lock.unlock()
         let now = Date()
-        if rms > Self.speechLevel { lastSpeechAt = now }
+        if rms > Self.speechLevel {
+            lastSpeechAt = now
+            heardSpeech = true
+        }
         let silent = now.timeIntervalSince(lastSpeechAt) > Self.silenceLimit
         let tooLong = now.timeIntervalSince(startedAt) > Self.maxDuration
         if (silent || tooLong) && !autoStopSent {
