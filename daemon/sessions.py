@@ -6,6 +6,7 @@ dies with its claude process, and kill -9 or closing a terminal tab skips it ent
 
 import os
 import subprocess
+import threading
 import time
 from dataclasses import dataclass
 from typing import Callable
@@ -51,16 +52,18 @@ class SessionWatch:
         self._scan, self._clock = scan, clock
         self.sessions: list[Session] = []
         self._empty_since: float | None = clock()
+        self._lock = threading.Lock()  # the worker loop and /health both refresh
 
     def refresh(self) -> None:
         output = self._scan()
         if output is None:  # ps failed: keep the last known state rather than guess "none open"
             return
-        self.sessions = parse_sessions(output)
-        if self.sessions:
-            self._empty_since = None
-        elif self._empty_since is None:
-            self._empty_since = self._clock()
+        with self._lock:
+            self.sessions = parse_sessions(output)
+            if self.sessions:
+                self._empty_since = None
+            elif self._empty_since is None:
+                self._empty_since = self._clock()
 
     def none_for(self, seconds: float) -> bool:
         """True once no session has been open for `seconds` (a grace for /clear and restarts)."""

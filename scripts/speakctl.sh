@@ -111,10 +111,12 @@ input_state() {
   if ! launchctl print "gui/$(id -u)/$HOTKEY_AGENT" >/dev/null 2>&1; then
     helper="hotkey helper not running (run /speak setup input)"
   else
-    missing=$(jq -r '[(if .input_monitoring then empty else "Input Monitoring" end),
-                      (if .microphone == "granted" then empty else "Microphone" end)] | join(", ")' \
-              "$DATA/hotkey_status.json" 2>/dev/null)
-    if [ -n "$missing" ]; then helper="needs $missing (System Settings > Privacy & Security)"; else helper="ready"; fi
+    if ! missing=$(jq -er '[(if .input_monitoring then empty else "Input Monitoring" end),
+                            (if .microphone == "granted" then empty else "Microphone" end)] | join(", ")' \
+                   "$DATA/hotkey_status.json" 2>/dev/null); then
+      helper="helper state unknown (see hotkey.log in the data dir)"
+    elif [ -n "$missing" ]; then helper="needs $missing (System Settings > Privacy & Security)"
+    else helper="ready"; fi
   fi
   echo "Voice input: double-tap $(hotkey_state) · autosend $(autosend_state) · language $lang · $helper"
 }

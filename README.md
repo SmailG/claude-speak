@@ -82,10 +82,10 @@ Tools: `xcode-select --install`). macOS then asks you to allow it:
 
 | Permission | Why |
 |---|---|
-| Input Monitoring | To see the double tap. The helper only listens (it never blocks or changes a key) and only looks at which modifier key changed, never at what you type |
+| Input Monitoring | To see the double tap. The helper only listens (it never blocks or changes a key). It notes that some other key was pressed, which cancels a tap in progress, but never reads which key or what you type |
 | Microphone | To record while you dictate |
 | Automation (iTerm2 / Terminal) | To find the tab running Claude Code and type the transcript into it |
-| Accessibility (Terminal.app only) | Terminal.app has no "type text" command, so the helper pastes with ⌘V and restores your clipboard |
+| Automation (System Events) and Accessibility, Terminal.app only | Terminal.app has no "type text" command, so the helper pastes with ⌘V and restores your clipboard; asked at the first dictation in Terminal.app, which goes to the clipboard |
 
 Then, in an **iTerm2 or Terminal.app tab running Claude Code**: double-tap Right Option, speak,
 and tap it once more (or stay silent for 15 s; a recording is capped at 2 minutes). Speech that is
@@ -95,9 +95,12 @@ prompt; with `/speak autosend on` it is also sent.
 - **Only in Claude Code**: anywhere else (another app, a terminal tab without Claude Code) the key
   does nothing, and Right Option keeps working normally, including `@`, `[` and `{` on keyboard
   layouts that use it: a press counts only when the key is tapped alone.
-- **Never into a menu**: while that session shows a permission prompt, a question or a plan to
-  approve, the transcript goes to the clipboard instead (a "yes" or "2" would answer the menu).
-  After you answer a permission prompt with "No", this lasts until you send your next prompt.
+- **Never into a menu**: while that session shows a permission prompt, a question, a plan to
+  approve or an MCP form, the transcript goes to the clipboard instead (a "yes" or "2" would
+  answer the menu). After you answer a permission prompt with "No" or Esc, this lasts until you
+  send your next prompt. The same happens if the tab stopped running Claude Code, or if
+  Terminal.app is no longer the active app when the transcript is ready. Other one-key prompts
+  Claude Code may show (such as a feedback survey) are not detected.
 - **Fn**: `/speak hotkey fn` works, but other apps that use a double Fn (Wispr Flow, macOS
   dictation) also see it. That only matters inside Claude Code tabs, where the helper reacts.
 - **Speed**: about 1 s to transcribe 15 s of speech, plus ~2 s the first time while Whisper loads.

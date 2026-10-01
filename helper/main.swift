@@ -48,7 +48,7 @@ final class Controller {
         trimLog()
         Permissions.writeStatus(dataDir: dataDir, hotkey: hotkey)
         guard hotkey != .off else { return log("hotkey is off; idle") }
-        Permissions.requestMicrophone()
+        requestMicrophone()
         guard Permissions.inputMonitoring else { return waitForInputMonitoring() }
         guard installTap() else {
             log("could not create the event tap")
@@ -75,6 +75,11 @@ final class Controller {
             log("Input Monitoring granted; restarting")
             exit(0)
         }
+    }
+
+    func requestMicrophone() {
+        let dataDir = self.dataDir, hotkey = self.hotkey
+        Permissions.requestMicrophone { Permissions.writeStatus(dataDir: dataDir, hotkey: hotkey) }
     }
 
     func installTap() -> Bool {
@@ -126,13 +131,12 @@ final class Controller {
         guard let id = NSWorkspace.shared.frontmostApplication?.bundleIdentifier,
               let app = TerminalApp(rawValue: id), let tty = terminals.frontTTY(app) else { return }
         guard let health = daemon.health() else {
-            return hud.show("claude-speak: the speech service is not running", for: 3)
+            return hud.show("claude-speak: the speech service is not running (or still loading)", for: 3)
         }
         guard health.sessions.contains(tty) else { return }  // this tab isn't running Claude Code
         guard health.voiceInput else { return hud.show("Voice input is not set up: run /speak setup input", for: 4) }
         guard Permissions.microphone == "granted" else {
-            Permissions.requestMicrophone()
-            Permissions.writeStatus(dataDir: dataDir, hotkey: hotkey)
+            requestMicrophone()
             return hud.show("Allow the microphone: System Settings › Privacy & Security › Microphone", for: 5)
         }
         daemon.prepare()
@@ -150,6 +154,10 @@ final class Controller {
     func finishListening() {
         guard case .listening(let target) = phase else { return }
         let (wav, seconds) = recorder.stop()
+        guard recorder.heardSpeech else {  // Whisper turns silence into "Thank you."
+            phase = .idle
+            return hud.show("Didn't hear anything", for: 2)
+        }
         phase = .transcribing
         hud.show("Transcribing…")
         let daemon = self.daemon
@@ -173,16 +181,19 @@ final class Controller {
 
     func deliver(_ text: String, to target: Target) {
         guard !text.isEmpty else { return hud.show("Didn't catch that", for: 2) }
-        let guarded = daemon.health()?.guarded ?? [target.tty]  // no answer: assume a menu is open
-        let frontNow = target.app == .terminal ? terminals.frontTTY(.terminal) : nil
-        var how = delivery(app: target.app, tty: target.tty, guarded: guarded, frontTTYNow: frontNow)
+        let health = daemon.health()  // no answer: nothing is known to be safe, so the clipboard
+        let frontApp = NSWorkspace.shared.frontmostApplication?.bundleIdentifier.flatMap(TerminalApp.init)
+        let now = DeliveryState(sessions: health?.sessions ?? [], guarded: health?.guarded ?? [],
+                                frontApp: frontApp,
+                                frontTTY: frontApp == .terminal ? terminals.frontTTY(.terminal) : nil)
+        var how = delivery(app: target.app, tty: target.tty, now: now)
         if how == .type && target.app == .terminal && !Permissions.accessibility {
             Permissions.askAccessibility()
             how = .clipboard
         }
         if how == .clipboard {
             Clipboard.set(text)
-            let why = guarded.contains(target.tty) ? "Claude is waiting for an answer" : "couldn't type there"
+            let why = now.guarded.contains(target.tty) ? "Claude is waiting for an answer" : "couldn't type there"
             log("copied to the clipboard (\(why))")
             return hud.show("Copied (\(why)) — paste with ⌘V", for: 4)
         }

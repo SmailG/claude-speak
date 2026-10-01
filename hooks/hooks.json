@@ -85,6 +85,30 @@
           }
         ]
       }
+    ],
+    "Elicitation": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/tts.sh\" guard",
+            "async": true,
+            "timeout": 3
+          }
+        ]
+      }
+    ],
+    "ElicitationResult": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/tts.sh\" guard",
+            "async": true,
+            "timeout": 3
+          }
+        ]
+      }
     ]
   }
 }

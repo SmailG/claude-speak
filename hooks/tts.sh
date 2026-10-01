@@ -25,13 +25,24 @@ claude_tty() {
   done
 }
 
+# The header marks a hook (a web page can't send it to localhost without a CORS preflight).
 post() {
-  curl -s --max-time 1 -o /dev/null --data-binary @- "http://127.0.0.1:$PORT/$1?tty=$(claude_tty)" 2>/dev/null
+  curl -s --max-time 1 -o /dev/null -H "X-Claude-Speak-Hook: 1" --data-binary @- \
+    "http://127.0.0.1:$PORT/$1?tty=$(claude_tty)" 2>/dev/null
+}
+
+# The guard needs only what identifies the call, not tool_response (which can be megabytes).
+guard_fields() {
+  if command -v jq >/dev/null 2>&1; then
+    jq -c '{hook_event_name, tool_name, tool_input}' 2>/dev/null
+  else
+    cat
+  fi
 }
 
 case "$ACTION" in
-  speak) if [ -e "$HOME_DIR/off" ]; then post guard; else post speak; fi ;;
-  guard) post guard ;;
+  speak) if [ -e "$HOME_DIR/off" ]; then guard_fields | post guard; else post speak; fi ;;
+  guard) guard_fields | post guard ;;
   *) post stop ;;
 esac
 exit 0

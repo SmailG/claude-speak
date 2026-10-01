@@ -17,6 +17,26 @@ LABEL="$BUNDLE_ID"
 PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
 PORT="${CLAUDE_SPEAK_PORT:-8765}"
 BUNDLE_FORMAT=1  # bump when info_plist() changes, so existing installs rebuild
+LOCK="$DATA/.hotkey-build.lock"
+LOCK_STALE_MIN=10
+WORK=""
+
+cleanup() {
+  [ -n "$WORK" ] && rm -rf "$WORK"
+  rmdir "$LOCK" 2>/dev/null || true
+}
+
+# Two sessions starting after an update both run this; only one may build.
+take_lock() {
+  mkdir -p "$DATA"
+  if [ -n "$(find "$LOCK" -maxdepth 0 -mmin +"$LOCK_STALE_MIN" 2>/dev/null)" ]; then rmdir "$LOCK"; fi
+  mkdir "$LOCK" 2>/dev/null || { echo "another hotkey helper build is running"; exit 0; }
+  trap cleanup EXIT
+}
+
+has_swiftc() {  # /usr/bin/swiftc exists on every Mac; it's only a shim without the developer tools
+  xcode-select -p >/dev/null 2>&1 && xcrun --find swiftc >/dev/null 2>&1
+}
 
 source_hash() {
   { echo "$BUNDLE_FORMAT"; cat "$ROOT"/helper/*.swift; } | shasum -a 256 | cut -c1-16
@@ -70,22 +90,21 @@ EOF
 }
 
 build() {
-  command -v swiftc >/dev/null 2>&1 || {
+  has_swiftc || {
     echo "The hotkey needs the Xcode Command Line Tools: run 'xcode-select --install', then /speak setup input again."
     exit 3
   }
-  local tmp bundle replaced=false
-  tmp=$(mktemp -d)
-  trap 'rm -rf "$tmp"' EXIT
-  bundle="$tmp/$NAME.app"
+  local bundle replaced=false
+  WORK=$(mktemp -d)
+  bundle="$WORK/$NAME.app"
   mkdir -p "$bundle/Contents/MacOS" "$bundle/Contents/Resources"
-  swiftc -O -o "$bundle/Contents/MacOS/ClaudeSpeakHotkey" "$ROOT"/helper/*.swift
+  xcrun swiftc -O -o "$bundle/Contents/MacOS/ClaudeSpeakHotkey" "$ROOT"/helper/*.swift
   info_plist > "$bundle/Contents/Info.plist"
   source_hash > "$bundle/Contents/Resources/source-hash"
   codesign --force --sign - --identifier "$BUNDLE_ID" "$bundle" >/dev/null 2>&1
   launchctl bootout "gui/$(id -u)/$LABEL" >/dev/null 2>&1 || true
   mkdir -p "$APP_DIR"
-  if [ -d "$APP" ]; then mv "$APP" "$tmp/previous.app"; replaced=true; fi
+  if [ -d "$APP" ]; then mv "$APP" "$WORK/previous.app"; replaced=true; fi
   mv "$bundle" "$APP"
   if $replaced; then  # the old grants belong to the old build; clear them so macOS asks again
     tccutil reset All "$BUNDLE_ID" >/dev/null 2>&1 || true
@@ -93,6 +112,7 @@ build() {
   echo "built $APP"
 }
 
+take_lock
 changed=false
 if [ "$(cat "$APP/Contents/Resources/source-hash" 2>/dev/null)" != "$(source_hash)" ]; then
   build
