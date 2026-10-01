@@ -5,7 +5,9 @@ Keeps Kokoro (English) and OmniVoice (Bosnian/Croatian/Serbian, cloned voice) re
   POST /stop    UserPromptSubmit payload (session_id, prompt); empty body = stop everything
   GET  /health  {"name", "version", "home", "ready"}; 200 when ready, 503 while loading
 
-State lives in CLAUDE_SPEAK_HOME (the plugin's data dir): voices/, off, max_chars, speed, speakd.log.
+State lives in CLAUDE_SPEAK_HOME (the plugin's data dir): voices/, off, max_chars, speed,
+unload_minutes, speakd.log. Kokoro (English) stays loaded; OmniVoice (Bosnian) loads on first use and
+unloads when idle or once no Claude Code session is open.
 """
 
 import json
@@ -16,13 +18,14 @@ import time
 import traceback
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-import numpy as np
-
+import engines
 from jobs import CancelRing, Job, JobBoard, queue_age_limit
+from models import ModelManager
+from sessions import SessionWatch
 from player import Player
 from text import CONTROL_MARKER, MERGE_TO, is_bosnian, parse_payload, prepare, split_chunks
 
-NAME, VERSION = "claude-speak", "0.2.1"
+NAME, VERSION = "claude-speak", "0.3.0"
 HOST, PORT = "127.0.0.1", int(os.environ.get("CLAUDE_SPEAK_PORT", "8765"))
 HOME = os.environ.get("CLAUDE_SPEAK_HOME") or os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 MAX_CHARS = int(os.environ.get("CLAUDE_SPEAK_MAX_CHARS", "2000"))
@@ -33,11 +36,11 @@ SPEED_FILE = os.path.join(HOME, "speed")      # written by `/speak speed X`
 MIN_SPEED, MAX_SPEED = 1.0, 1.3  # keep in sync with SPEED_RE in scripts/speakctl.sh
 LOG_PATH, LOG_MAX_BYTES = os.path.join(HOME, "speakd.log"), 512 * 1024
 
-EN_MODEL, EN_VOICE, EN_LANG = "mlx-community/Kokoro-82M-bf16", "af_heart", "a"
-BS_MODEL, BS_LANG = "mlx-community/OmniVoice-bfloat16", "bs"
-BS_REF_WAV = os.path.join(HOME, "voices", "voice_bs.wav")
-BS_REF_TXT = os.path.join(HOME, "voices", "voice_bs.txt")
-OMNI_TOKENS_PER_SEC = 25
+VOICES_DIR = os.path.join(HOME, "voices")
+UNLOAD_FILE = os.path.join(HOME, "unload_minutes")  # written by `/speak unload N`; 0 = keep loaded
+DEFAULT_UNLOAD_MIN, MAX_UNLOAD_MIN = 10, 1440
+HOUSEKEEPING_EVERY_S = 30  # session scan + idle sweep
+NO_SESSION_GRACE_S = 60    # /clear and restarts briefly show zero sessions
 
 
 def short(session: str | None) -> str:
@@ -62,6 +65,15 @@ def speech_speed() -> float:
         return MIN_SPEED
 
 
+def unload_minutes() -> int:
+    """Idle minutes before the Bosnian voice unloads (0 = never while a session is open)."""
+    try:
+        with open(UNLOAD_FILE, encoding="utf-8") as f:
+            return min(MAX_UNLOAD_MIN, max(0, int(f.read().strip())))
+    except (OSError, ValueError):
+        return DEFAULT_UNLOAD_MIN
+
+
 def trim_log() -> None:
     """Keep the log bounded; launchd opens it O_APPEND, so truncating in place is safe."""
     try:
@@ -82,6 +94,10 @@ class Speaker:
         ring = CancelRing.create(ctx)
         self.board = JobBoard(ring)
         self.player = Player(ring, ctx)
+        self.models = ModelManager({"en": engines.load_en, "bs": lambda: engines.load_bs(VOICES_DIR)},
+                                   resident=("en",), release=engines.release)
+        self.sessions = SessionWatch()
+        self._next_housekeeping = 0.0
         self.ready = threading.Event()
         threading.Thread(target=self._generate_loop, daemon=True).start()
 
@@ -102,35 +118,14 @@ class Speaker:
             print(f"stop: session={short(session) if session else 'all'} cancelled={n}", flush=True)
 
     def _load(self) -> None:
-        from mlx_audio.tts.utils import load_model
-        from mlx_audio.tts.models.omnivoice.utils import create_voice_clone_prompt
-        from mlx_audio.tts.models.omnivoice.duration import RuleDurationEstimator
-
-        self.en = load_model(EN_MODEL)
-        self.bs = load_model(BS_MODEL)
-        self.bs_ref = create_voice_clone_prompt(BS_REF_WAV, tokenizer=self.bs.audio_tokenizer,
-                                                max_duration_s=10.0)
-        with open(BS_REF_TXT, encoding="utf-8") as f:
-            self.bs_ref_text = f.read().strip()
-        # Pace speech from the reference clip, as upstream OmniVoice does; the MLX port
-        # otherwise assumes "Nice to meet you." = 1 s and pads the estimate by 15%.
-        self.bs_est = RuleDurationEstimator()
-        for bosnian in (False, True):  # warm up both pipelines (consume the generators)
-            list(self._synth("Spreman.", bosnian, MIN_SPEED))
+        list(self._synth("Ready.", False, MIN_SPEED))  # loads and warms up Kokoro
         self.ready.set()
-        print(f"{NAME} {VERSION}: models loaded (home {HOME})", flush=True)
+        print(f"{NAME} {VERSION}: English voice loaded, Bosnian loads on first use (home {HOME})", flush=True)
 
     def _synth(self, chunk: str, bosnian: bool, speed: float):
-        """Both engines speed up natively (no resampling, so pitch is unchanged)."""
         if bosnian:
-            tokens = self.bs_est.estimate_duration(chunk, self.bs_ref_text, self.bs_ref.shape[0])
-            results = self.bs.generate(text=chunk, lang_code=BS_LANG,
-                                       ref_tokens=self.bs_ref, ref_text=self.bs_ref_text,
-                                       duration_s=max(1, int(tokens)) / OMNI_TOKENS_PER_SEC / speed)
-        else:
-            results = self.en.generate(text=chunk, voice=EN_VOICE, lang_code=EN_LANG, speed=speed)
-        for r in results:
-            yield np.array(r.audio, dtype=np.float32), r.sample_rate
+            return engines.synth_bs(self.models.get("bs"), chunk, speed)
+        return engines.synth_en(self.models.get("en"), chunk, speed)
 
     def _generate_loop(self) -> None:
         try:
@@ -140,12 +135,25 @@ class Speaker:
             print(f"{NAME}: model load failed; exiting (re-run /speak setup)", flush=True)
             os._exit(1)
         while True:
-            job = self.board.next_job()
+            self._housekeeping()
+            job = self.board.next_job(timeout=HOUSEKEEPING_EVERY_S)
+            if job is None:
+                continue
             audio_s = 0.0
             try:
                 audio_s = self._speak_job(job)
             finally:
                 self.board.finish(job, audio_s)
+                engines.clear_cache()
+
+    def _housekeeping(self) -> None:
+        """Every HOUSEKEEPING_EVERY_S: rescan sessions, unload idle models (MLX thread only)."""
+        now = time.monotonic()
+        if now < self._next_housekeeping:
+            return
+        self._next_housekeeping = now + HOUSEKEEPING_EVERY_S
+        self.sessions.refresh()
+        self.models.sweep(unload_minutes() * 60, self.sessions.none_for(NO_SESSION_GRACE_S))
 
     def _speak_job(self, job: Job) -> float:
         """Generate one job's audio into the player; returns seconds of audio sent."""
@@ -190,7 +198,9 @@ def make_handler(speaker: Speaker):
             if self.path != "/health":
                 return self._reply(404)
             ready = speaker.ready.is_set()
-            body = json.dumps({"name": NAME, "version": VERSION, "home": HOME, "ready": ready}).encode()
+            body = json.dumps({"name": NAME, "version": VERSION, "home": HOME, "ready": ready,
+                               "models": speaker.models.loaded(), "unload_minutes": unload_minutes(),
+                               "sessions": [x.tty for x in speaker.sessions.sessions]}).encode()
             self._reply(200 if ready else 503, body)
 
         def _reply(self, code: int, body: bytes = b""):

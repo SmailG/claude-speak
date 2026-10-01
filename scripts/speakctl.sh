@@ -2,7 +2,7 @@
 # Backend of the /speak skill.
 #   speakctl.sh "<args>" <session_id> <data_dir>
 #   args: (none) = replay this session's last reply | on | off | status | limit N | speed X
-#         | setup | uninstall
+#         | unload N | setup | uninstall
 # The skill passes all its arguments as one string ($1); it is re-split here.
 # Every line starts with "[speak]": the daemon never speaks replies with that marker, so
 # Claude echoing this output can't interrupt a replay.
@@ -15,6 +15,8 @@ DEFAULT_LIMIT=2000   # keep in sync with MAX_CHARS in daemon/speakd.py
 MAX_LIMIT=100000
 SPEED_RE='^1(\.([0-2][0-9]?|30?))?$'   # 1.0 .. 1.3, at most two decimals (MIN/MAX_SPEED in speakd.py)
 EN_WPM=187           # English words per minute measured at speed 1
+DEFAULT_UNLOAD=10    # keep in sync with DEFAULT_UNLOAD_MIN in daemon/speakd.py
+MAX_UNLOAD=1440
 VERSION=$(jq -r '.version // "?"' "$ROOT/.claude-plugin/plugin.json" 2>/dev/null)
 
 say() { echo "[speak] $*"; }
@@ -23,6 +25,7 @@ if [ -z "$DATA" ]; then say "No plugin data directory given; run this through /s
 MUTE="$DATA/off"
 LIMIT_FILE="$DATA/max_chars"
 SPEED_FILE="$DATA/speed"
+UNLOAD_FILE="$DATA/unload_minutes"
 
 daemon_state() {
   health=$(curl -s --max-time 1 "http://127.0.0.1:$PORT/health" 2>/dev/null)
@@ -56,6 +59,24 @@ speed_state() {
   [[ "$v" =~ $SPEED_RE ]] || v=1
   frac="${v#1}"; frac="${frac#.}00"; s100=$((100 + 10#${frac:0:2}))
   echo "speed ${v}x (~$((EN_WPM * s100 / 100)) wpm in English)"
+}
+
+unload_state() {
+  local n
+  n=$(cat "$UNLOAD_FILE" 2>/dev/null || echo "$DEFAULT_UNLOAD")
+  [[ "$n" =~ ^[0-9]+$ ]] || n=$DEFAULT_UNLOAD
+  if [ "$n" = "0" ]; then
+    echo "Bosnian voice kept loaded while a session is open"
+  else
+    echo "Bosnian voice unloads after $n min idle"
+  fi
+}
+
+# "Bosnian voice loaded · 2 sessions open", from /health (empty when the service doesn't report it)
+memory_state() {
+  curl -s --max-time 1 "http://127.0.0.1:$PORT/health" 2>/dev/null | jq -r '
+    select(.models != null)
+    | "Bosnian voice \(if .models.bs then "loaded" else "not loaded" end) · \(.sessions | length) session\(if (.sessions | length) == 1 then "" else "s" end) open"' 2>/dev/null
 }
 
 # Last final-text reply of this session, from its transcript (works while muted and across
@@ -94,7 +115,8 @@ case "$ACTION" in
           curl -s --max-time 1 -o /dev/null -X POST "http://127.0.0.1:$PORT/stop" 2>/dev/null
           say "Speech OFF (/speak still replays on demand)" ;;
   status) [ -e "$MUTE" ] && s=OFF || s=ON
-          say "claude-speak $VERSION — speech $s — $(limit_state) — $(speed_state) — $(daemon_state)" ;;
+          say "claude-speak $VERSION — speech $s — $(limit_state) — $(speed_state) — $(daemon_state)"
+          mem=$(memory_state); [ -n "$mem" ] && say "$mem — $(unload_state)" ;;
   limit)  if [[ "$VALUE" =~ ^[0-9]+$ ]] && [ "$VALUE" -le "$MAX_LIMIT" ]; then
             printf '%s\n' "$((10#$VALUE))" > "$LIMIT_FILE"; say "Speech $(limit_state) (0 = no limit)"
           else
@@ -105,8 +127,13 @@ case "$ACTION" in
           else
             say "Usage: /speak speed X  (X = 1.0..1.3, e.g. 1.2). Currently: $(speed_state)"
           fi ;;
+  unload) if [[ "$VALUE" =~ ^[0-9]+$ ]] && [ "$((10#$VALUE))" -le "$MAX_UNLOAD" ]; then
+            printf '%s\n' "$((10#$VALUE))" > "$UNLOAD_FILE"; say "$(unload_state) (always unloads 1–2 min after the last session closes)"
+          else
+            say "Usage: /speak unload N  (N = minutes idle before the Bosnian voice unloads, 0..$MAX_UNLOAD; 0 = keep loaded while a session is open). Currently: $(unload_state)"
+          fi ;;
   setup)  say "SETUP" ;;
   uninstall) bash "$ROOT/scripts/uninstall.sh" "$DATA" | sed 's/^/[speak] /' ;;
-  *)      say "Unknown option '$ACTION'. Use: /speak (replay) | on | off | status | limit N | speed X | setup | uninstall" ;;
+  *)      say "Unknown option '$ACTION'. Use: /speak (replay) | on | off | status | limit N | speed X | unload N | setup | uninstall" ;;
 esac
 exit 0
