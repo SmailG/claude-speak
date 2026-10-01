@@ -28,10 +28,9 @@ HOME = os.environ.get("CLAUDE_SPEAK_HOME") or os.path.dirname(os.path.dirname(os
 MAX_CHARS = int(os.environ.get("CLAUDE_SPEAK_MAX_CHARS", "2000"))
 LIMIT_FILE = os.path.join(HOME, "max_chars")  # written by `/speak limit N`; 0 = no limit
 SPEED_FILE = os.path.join(HOME, "speed")      # written by `/speak speed X`
-MIN_SPEED, MAX_SPEED = 1.0, 1.5
-# OmniVoice regenerates speech into a shorter token budget: above 1.3 playback stalls between
-# chunks (synthesis stops outrunning playback) and from 1.5 words get garbled (Whisper WER 6-30%).
-BS_MAX_SPEED = 1.3  # keep in sync with scripts/speakctl.sh
+# Above 1.3 OmniVoice (Bosnian) stops outrunning playback, so speech stalls between chunks,
+# and at 1.5 its words get garbled (Whisper WER 6-30%). One range for both languages.
+MIN_SPEED, MAX_SPEED = 1.0, 1.3  # keep in sync with SPEED_RE in scripts/speakctl.sh
 LOG_PATH, LOG_MAX_BYTES = os.path.join(HOME, "speakd.log"), 512 * 1024
 
 EN_MODEL, EN_VOICE, EN_LANG = "mlx-community/Kokoro-82M-bf16", "af_heart", "a"
@@ -152,7 +151,7 @@ class Speaker:
         """Generate one job's audio into the player; returns seconds of audio sent."""
         text = prepare(job.text, char_limit())
         bosnian = is_bosnian(text)
-        speed = min(speech_speed(), BS_MAX_SPEED) if bosnian else speech_speed()
+        speed = speech_speed()
         trim_log()
         print(f"reply: session={short(job.session)} engine={'omnivoice/bs' if bosnian else 'kokoro/en'} "
               f"chars={len(text)} speed={speed:g} waited={time.monotonic() - job.queued_at:.1f}s", flush=True)

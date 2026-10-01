@@ -34,7 +34,7 @@ Replies are spoken automatically once setup is done.
 | `/speak off` / `/speak on` | Mute / unmute spoken replies (`off` also stops current speech) |
 | `/speak status` | Version, mute state, length limit, speed, service state |
 | `/speak limit N` | Speak at most N characters per reply (default 2000; `0` = no limit) |
-| `/speak speed X` | Speaking speed, `1.0`–`1.5` (default 1.0 ≈ 187 words per minute in English) |
+| `/speak speed X` | Speaking speed, `1.0`–`1.3`, e.g. `1.25` (default 1.0 ≈ 187 words per minute in English) |
 | `/speak setup` | Install or repair the speech service |
 | `/speak uninstall` | Stop and remove the speech service |
 
@@ -54,9 +54,9 @@ The plugin skill is `/claude-speak:speak`; plain `/speak` works as long as no ot
 - **Language** is decided per reply: Bosnian/Croatian/Serbian text goes to OmniVoice, everything
   else to Kokoro (`af_heart`). Typical time to first audio: English ~0.3 s, Bosnian ~3 s.
 - **Speed** applies to the next reply. Both engines speed up natively, so pitch stays the same.
-  Bosnian is capped at 1.3×: above that, OmniVoice synthesis falls behind playback (gaps between
-  sentences), and at 1.5× Whisper transcribes 6–30% of its words wrongly. English at 1.5× is
-  ~280 words per minute.
+  The range stops at 1.3× (~243 words per minute in English): above that, Bosnian synthesis
+  falls behind playback (gaps between sentences), and at 1.5× Whisper transcribes 6–30% of its
+  words wrongly.
 
 ## How it works
 
