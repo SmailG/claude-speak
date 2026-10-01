@@ -13,9 +13,8 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PORT="${CLAUDE_SPEAK_PORT:-8765}"
 DEFAULT_LIMIT=2000   # keep in sync with MAX_CHARS in daemon/speakd.py
 MAX_LIMIT=100000
-SPEED_RE='^1(\.([0-4][0-9]?|50?))?$'   # 1.0 .. 1.5, at most two decimals (MIN/MAX_SPEED in speakd.py)
+SPEED_RE='^1(\.([0-2][0-9]?|30?))?$'   # 1.0 .. 1.3, at most two decimals (MIN/MAX_SPEED in speakd.py)
 EN_WPM=187           # English words per minute measured at speed 1
-BS_MAX_SPEED=130     # Bosnian is capped at 1.3x (BS_MAX_SPEED in speakd.py), in hundredths
 VERSION=$(jq -r '.version // "?"' "$ROOT/.claude-plugin/plugin.json" 2>/dev/null)
 
 say() { echo "[speak] $*"; }
@@ -44,7 +43,7 @@ limit_state() {
   [ "$n" = "0" ] && echo "no length limit" || echo "limit $n chars"
 }
 
-# "1.50" -> "1.5", "1.0" -> "1" (string ops: bash has no floats, and printf %f is locale-bound)
+# "1.30" -> "1.3", "1.0" -> "1" (string ops: bash has no floats, and printf %f is locale-bound)
 normalize_speed() {
   local v="$1"
   [[ "$v" == *.* ]] && while [[ "$v" == *0 ]]; do v="${v%0}"; done
@@ -52,12 +51,11 @@ normalize_speed() {
 }
 
 speed_state() {
-  local v frac s100 note=""
+  local v frac s100
   v=$(cat "$SPEED_FILE" 2>/dev/null)
   [[ "$v" =~ $SPEED_RE ]] || v=1
   frac="${v#1}"; frac="${frac#.}00"; s100=$((100 + 10#${frac:0:2}))
-  [ "$s100" -gt "$BS_MAX_SPEED" ] && note="; Bosnian capped at 1.3x"
-  echo "speed ${v}x (~$((EN_WPM * s100 / 100)) wpm in English$note)"
+  echo "speed ${v}x (~$((EN_WPM * s100 / 100)) wpm in English)"
 }
 
 # Last final-text reply of this session, from its transcript (works while muted and across
@@ -105,7 +103,7 @@ case "$ACTION" in
   speed)  if [[ "$VALUE" =~ $SPEED_RE ]]; then
             normalize_speed "$VALUE" > "$SPEED_FILE"; say "Speech $(speed_state), from the next reply"
           else
-            say "Usage: /speak speed X  (X = 1.0..1.5, e.g. 1.2). Currently: $(speed_state)"
+            say "Usage: /speak speed X  (X = 1.0..1.3, e.g. 1.2). Currently: $(speed_state)"
           fi ;;
   setup)  say "SETUP" ;;
   uninstall) bash "$ROOT/scripts/uninstall.sh" "$DATA" | sed 's/^/[speak] /' ;;
