@@ -38,6 +38,8 @@ Replies are spoken automatically once setup is done.
 | `/speak limit N` | Speak at most N characters per reply (default 2000; `0` = no limit) |
 | `/speak speed X` | Speaking speed, `1.0`–`1.3`, e.g. `1.25` (default 1.0 ≈ 187 words per minute in English) |
 | `/speak unload N` | Minutes idle before the Bosnian voice unloads (default 10; `0` = keep it loaded while a session is open) |
+| `/speak setup input` | Add local voice input: downloads Whisper (~1.5 GB). The hotkey that uses it arrives in 0.4.0 |
+| `/speak lang X` | Voice input language: `auto` (default), `bs`, `hr`, `sr`, `en`. `auto` may label Bosnian as Croatian or Serbian, and short clips can come back in Cyrillic, so `bs` is safer |
 | `/speak setup` | Install or repair the speech service |
 | `/speak uninstall` | Stop and remove the speech service |
 

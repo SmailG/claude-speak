@@ -92,6 +92,18 @@ check "no injection via unload" "no" "$([ -e "$TMP/pwned3" ] && echo yes || echo
 check "status shows memory state" "1" "$(ctl status | grep -c 'Bosnian voice not loaded · 2 sessions open — Bosnian voice unloads after 7 min idle')"
 ctl "unload 0" >/dev/null
 check "status shows keep-loaded" "1" "$(ctl status | grep -c 'kept loaded while a session is open')"
+for good in auto bs hr sr en; do
+  ctl "lang $good" >/dev/null
+  check "lang accepts $good" "$good" "$(cat "$DATA/stt_lang")"
+done
+for bad in "lang" "lang de" "lang BSX" "lang en; touch $TMP/pwned4"; do
+  ctl "$bad" >/dev/null
+  check "rejects '$bad'" "en" "$(cat "$DATA/stt_lang")"
+done
+check "no injection via lang" "no" "$([ -e "$TMP/pwned4" ] && echo yes || echo no)"
+check "setup asks for speech setup" "[speak] SETUP" "$(ctl setup)"
+check "setup input asks for input setup" "[speak] SETUP input" "$(ctl 'setup input')"
+check "setup rejects other targets" "0" "$(ctl 'setup bogus' | grep -c '^\[speak\] SETUP')"
 check "status names plugin" "1" "$(ctl status | grep -c '^\[speak\] claude-speak ')"
 check "status sees own daemon" "1" "$(ctl status | grep -c 'service running')"
 check "unknown option" "1" "$(ctl bogus | grep -c 'Unknown option')"

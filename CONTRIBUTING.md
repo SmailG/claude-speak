@@ -13,7 +13,7 @@ privately, as described in [SECURITY.md](SECURITY.md). Pull requests use the tem
 | `skills/speak/SKILL.md`, `scripts/speakctl.sh` | The `/speak` command |
 | `scripts/setup.sh`, `scripts/uninstall.sh` | Install / remove the runtime, models and launchd service |
 | `scripts/platform.sh` | Apple Silicon / macOS version / Rosetta checks used by setup |
-| `daemon/` | `speakd.py` (HTTP + MLX worker loop), `engines.py` (load/run Kokoro and OmniVoice), `models.py` (lazy load, idle unload), `sessions.py` (open Claude Code sessions via `ps`), `player.py` (playback process), `jobs.py` (queueing), `text.py` (cleanup, routing, chunking) |
+| `daemon/` | `speakd.py` (HTTP + MLX worker loop), `engines.py` (load/run Kokoro and OmniVoice), `models.py` (lazy load, idle unload), `sessions.py` (open Claude Code sessions via `ps`), `stt.py` (Whisper voice input), `settings.py` (the per-user setting files), `player.py` (playback process), `jobs.py` (queueing), `text.py` (cleanup, routing, chunking) |
 
 ## Rules
 
