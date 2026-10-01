@@ -6,6 +6,14 @@ set -euo pipefail
 
 DATA="${1:-${CLAUDE_PLUGIN_DATA:-}}"
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck source=platform.sh
+source "$ROOT/scripts/platform.sh"
+
+# A terminal running under Rosetta would install x86_64 Python, which MLX can't use:
+# re-run natively.
+if is_translated; then
+  exec arch -arm64 /bin/bash "${BASH_SOURCE[0]}" "$@"
+fi
 LABEL="com.claude-speak.daemon"
 PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
 PORT="${CLAUDE_SPEAK_PORT:-8765}"
@@ -18,8 +26,9 @@ fail() { echo "ERROR: $*" >&2; exit 1; }
 
 check_prereqs() {
   [ -n "$DATA" ] || fail "no data directory given (run this through /speak setup)"
-  [ "$(uname -s)" = "Darwin" ] && [ "$(uname -m)" = "arm64" ] \
-    || fail "claude-speak needs macOS on Apple Silicon (MLX); this is $(uname -s)/$(uname -m)"
+  local problem
+  problem=$(platform_problem)
+  [ -z "$problem" ] || fail "$problem"
   for tool in uv jq curl; do
     command -v "$tool" >/dev/null || fail "'$tool' not found. Install it (e.g. brew install $tool) and re-run /speak setup"
   done

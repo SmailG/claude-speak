@@ -22,7 +22,7 @@ from jobs import CancelRing, Job, JobBoard, queue_age_limit
 from player import Player
 from text import CONTROL_MARKER, MERGE_TO, is_bosnian, parse_payload, prepare, split_chunks
 
-NAME, VERSION = "claude-speak", "0.2.0"
+NAME, VERSION = "claude-speak", "0.2.1"
 HOST, PORT = "127.0.0.1", int(os.environ.get("CLAUDE_SPEAK_PORT", "8765"))
 HOME = os.environ.get("CLAUDE_SPEAK_HOME") or os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 MAX_CHARS = int(os.environ.get("CLAUDE_SPEAK_MAX_CHARS", "2000"))
