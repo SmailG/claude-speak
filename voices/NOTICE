@@ -1,0 +1,8 @@
+voice_bs.wav / voice_bs.txt
+
+A synthetic voice sample (no real person's voice) generated with OmniVoice
+(https://github.com/k2-fsa/OmniVoice) using the voice description
+"female, middle-aged, low pitch". OmniVoice model weights are licensed CC-BY-NC-4.0.
+
+This sample is provided for non-commercial use only and is not covered by the MIT license
+that applies to the rest of this repository.

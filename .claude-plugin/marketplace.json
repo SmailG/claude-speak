@@ -1,0 +1,15 @@
+{
+  "name": "claude-speak",
+  "description": "Local text-to-speech for Claude Code replies",
+  "owner": {
+    "name": "SmailG",
+    "url": "https://github.com/SmailG"
+  },
+  "plugins": [
+    {
+      "name": "claude-speak",
+      "description": "Speaks Claude Code replies aloud with local, offline text-to-speech on Apple Silicon. /speak replays the last reply.",
+      "source": "./"
+    }
+  ]
+}

@@ -1,0 +1,14 @@
+{
+  "name": "claude-speak",
+  "displayName": "Claude Speak",
+  "version": "0.1.0",
+  "description": "Speaks Claude Code replies aloud with local, offline text-to-speech on Apple Silicon (Kokoro for English, OmniVoice for Bosnian/Croatian/Serbian). /speak replays the last reply.",
+  "author": {
+    "name": "SmailG",
+    "url": "https://github.com/SmailG"
+  },
+  "homepage": "https://github.com/SmailG/claude-speak",
+  "repository": "https://github.com/SmailG/claude-speak",
+  "license": "MIT",
+  "keywords": ["tts", "text-to-speech", "voice", "accessibility", "mlx", "macos"]
+}

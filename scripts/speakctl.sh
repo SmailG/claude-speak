@@ -1,0 +1,88 @@
+#!/bin/bash
+# Backend of the /speak skill.
+#   speakctl.sh "<args>" <session_id> <data_dir>
+#   args: (none) = replay this session's last reply | on | off | status | limit N | setup | uninstall
+# The skill passes all its arguments as one string ($1); it is re-split here.
+# Every line starts with "[speak]": the daemon never speaks replies with that marker, so
+# Claude echoing this output can't interrupt a replay.
+
+SESSION="${2:-}"
+DATA="${3:-${CLAUDE_PLUGIN_DATA:-}}"
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+PORT="${CLAUDE_SPEAK_PORT:-8765}"
+DEFAULT_LIMIT=2000   # keep in sync with MAX_CHARS in daemon/speakd.py
+MAX_LIMIT=100000
+VERSION=$(jq -r '.version // "?"' "$ROOT/.claude-plugin/plugin.json" 2>/dev/null)
+
+say() { echo "[speak] $*"; }
+
+if [ -z "$DATA" ]; then say "No plugin data directory given; run this through /speak."; exit 0; fi
+MUTE="$DATA/off"
+LIMIT_FILE="$DATA/max_chars"
+
+daemon_state() {
+  health=$(curl -s --max-time 1 "http://127.0.0.1:$PORT/health" 2>/dev/null)
+  home=$(printf '%s' "$health" | jq -r '.home // empty' 2>/dev/null)
+  if [ -z "$health" ]; then
+    echo "service not running (run /speak setup)"
+  elif [ "$home" != "$DATA" ]; then
+    echo "port $PORT is served by another claude-speak install ($home)"
+  elif [ "$(printf '%s' "$health" | jq -r .ready)" = "true" ]; then
+    echo "service running"
+  else
+    echo "service loading models"
+  fi
+}
+
+limit_state() {
+  n=$(cat "$LIMIT_FILE" 2>/dev/null || echo "$DEFAULT_LIMIT")
+  [ "$n" = "0" ] && echo "no length limit" || echo "limit $n chars"
+}
+
+# Last final-text reply of this session, from its transcript (works while muted and across
+# daemon restarts). Skips earlier /speak echoes and subagent (sidechain) entries.
+last_reply_json() {
+  [[ "$SESSION" =~ ^[0-9a-fA-F-]{8,64}$ ]] || return 1
+  transcript=$(ls "$HOME"/.claude/projects/*/"$SESSION".jsonl 2>/dev/null | head -1)
+  [ -n "$transcript" ] || return 1
+  jq -c 'select(.type == "assistant" and (.isSidechain | not))
+         | .message.content[]? | select(.type == "text") | .text
+         | select(startswith("[speak]") | not)' "$transcript" 2>/dev/null | tail -1
+}
+
+replay() {
+  text=$(last_reply_json)
+  if [ -z "$text" ] || [ "$text" = '""' ]; then say "Nothing to replay yet in this session."; return; fi
+  payload=$(jq -cn --arg s "$SESSION" --argjson t "$text" '{session_id: $s, last_assistant_message: $t}')
+  if curl -s --max-time 2 -o /dev/null --data-binary "$payload" "http://127.0.0.1:$PORT/speak" 2>/dev/null; then
+    say "Replaying the last reply ($(printf '%s' "$text" | jq -r 'length') chars before cleanup)."
+  else
+    say "Could not reach the speech service — $(daemon_state)"
+  fi
+}
+
+set -f  # no globbing when re-splitting the argument string
+# shellcheck disable=SC2086
+set -- $(printf '%s' "${1:-}" | tr '[:upper:]' '[:lower:]')
+set +f
+ACTION="${1:-replay}"
+VALUE="${2:-}"
+
+case "$ACTION" in
+  replay|again) replay ;;
+  on)     rm -f "$MUTE"; say "Speech ON — $(limit_state) — $(daemon_state)" ;;
+  off)    touch "$MUTE"
+          curl -s --max-time 1 -o /dev/null -X POST "http://127.0.0.1:$PORT/stop" 2>/dev/null
+          say "Speech OFF (/speak still replays on demand)" ;;
+  status) [ -e "$MUTE" ] && s=OFF || s=ON
+          say "claude-speak $VERSION — speech $s — $(limit_state) — $(daemon_state)" ;;
+  limit)  if [[ "$VALUE" =~ ^[0-9]+$ ]] && [ "$VALUE" -le "$MAX_LIMIT" ]; then
+            printf '%s\n' "$((10#$VALUE))" > "$LIMIT_FILE"; say "Speech $(limit_state) (0 = no limit)"
+          else
+            say "Usage: /speak limit N  (N = 0..$MAX_LIMIT characters, 0 = no limit). Currently: $(limit_state)"
+          fi ;;
+  setup)  say "SETUP" ;;
+  uninstall) bash "$ROOT/scripts/uninstall.sh" "$DATA" | sed 's/^/[speak] /' ;;
+  *)      say "Unknown option '$ACTION'. Use: /speak (replay) | on | off | status | limit N | setup | uninstall" ;;
+esac
+exit 0

@@ -1,0 +1,1 @@
+Instalirao sam paket i pokrenuo testove. Dva testa ne prolaze zbog isteka vremena na mreži, ostali su u redu. Hoćeš li da to popravim?
