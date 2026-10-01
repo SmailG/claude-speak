@@ -130,11 +130,11 @@ final class Controller {
     func beginListening() {
         guard let id = NSWorkspace.shared.frontmostApplication?.bundleIdentifier,
               let app = TerminalApp(rawValue: id), let tty = terminals.frontTTY(app) else { return }
-        guard let health = daemon.health() else {
+        guard let tab = daemon.tab(tty) else {
             return hud.show("claude-speak: the speech service is not running (or still loading)", for: 3)
         }
-        guard health.sessions.contains(tty) else { return }  // this tab isn't running Claude Code
-        guard health.voiceInput else { return hud.show("Voice input is not set up: run /speak setup input", for: 4) }
+        guard tab.runsClaude else { return }  // this tab isn't running Claude Code
+        guard tab.voiceInput else { return hud.show("Voice input is not set up: run /speak setup input", for: 4) }
         guard Permissions.microphone == "granted" else {
             requestMicrophone()
             return hud.show("Allow the microphone: System Settings › Privacy & Security › Microphone", for: 5)
@@ -181,9 +181,10 @@ final class Controller {
 
     func deliver(_ text: String, to target: Target) {
         guard !text.isEmpty else { return hud.show("Didn't catch that", for: 2) }
-        let health = daemon.health()  // no answer: nothing is known to be safe, so the clipboard
+        let tab = daemon.tab(target.tty)  // no answer: nothing is known to be safe, so the clipboard
         let frontApp = NSWorkspace.shared.frontmostApplication?.bundleIdentifier.flatMap(TerminalApp.init)
-        let now = DeliveryState(sessions: health?.sessions ?? [], guarded: health?.guarded ?? [],
+        let now = DeliveryState(sessions: tab?.runsClaude == true ? [target.tty] : [],
+                                guarded: tab?.guarded == true ? [target.tty] : [],
                                 frontApp: frontApp,
                                 frontTTY: frontApp == .terminal ? terminals.frontTTY(.terminal) : nil)
         var how = delivery(app: target.app, tty: target.tty, now: now)
@@ -193,7 +194,10 @@ final class Controller {
         }
         if how == .clipboard {
             Clipboard.set(text)
-            let why = now.guarded.contains(target.tty) ? "Claude is waiting for an answer" : "couldn't type there"
+            let why = tab == nil ? "the speech service didn't answer"
+                : now.guarded.contains(target.tty) ? "Claude is waiting for an answer"
+                : !now.sessions.contains(target.tty) ? "Claude Code no longer runs in that tab"
+                : "couldn't type there"
             log("copied to the clipboard (\(why))")
             return hud.show("Copied (\(why)) — paste with ⌘V", for: 4)
         }

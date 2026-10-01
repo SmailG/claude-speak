@@ -39,12 +39,25 @@ def parse_sessions(ps_output: str) -> list[Session]:
     return sessions
 
 
-def run_ps() -> str | None:
+def run_ps(tty: str | None = None) -> str | None:
+    """All processes (~0.15 s with a few hundred running), or only one terminal's (~0.02 s)."""
+    where = ["-t", tty] if tty else ["-ax"]
     try:
-        return subprocess.run(["ps", "-axo", "pid=,tty=,args="], capture_output=True, text=True,
-                              timeout=5, check=True).stdout
+        done = subprocess.run(["ps", *where, "-o", "pid=,tty=,args="], capture_output=True, text=True,
+                              timeout=5)
     except (OSError, subprocess.SubprocessError):
         return None
+    if done.returncode == 0 or (tty and done.returncode == 1 and not done.stdout):
+        return done.stdout  # ps -t exits 1 for a terminal that no longer exists: nothing runs there
+    return None
+
+
+def runs_claude(tty: str, scan: Callable[[str], str | None] = run_ps) -> bool | None:
+    """Whether this terminal runs an interactive Claude Code session; None if ps failed."""
+    output = scan(tty)
+    if output is None:
+        return None
+    return any(s.tty == tty for s in parse_sessions(output))
 
 
 class SessionWatch:

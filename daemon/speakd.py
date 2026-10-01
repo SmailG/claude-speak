@@ -1,19 +1,18 @@
-"""claude-speak daemon: speaks Claude Code replies locally.
+"""claude-speak daemon: speaks Claude Code replies locally, and transcribes voice input.
 
-Keeps Kokoro (English) and OmniVoice (Bosnian/Croatian/Serbian, cloned voice) resident.
   POST /speak   Stop-hook JSON payload (last_assistant_message, session_id)
   POST /stop    UserPromptSubmit payload (session_id, prompt); empty body = stop everything
   POST /prepare      start loading Whisper (voice input is about to record)
   POST /transcribe   16-bit PCM WAV body -> {"text", "language"} (local Whisper; text is never logged)
   POST /guard?tty=X  hook JSON: a session opened or closed a menu that typing would answer
-                     (needs the X-Claude-Speak-Hook header, which a web page can't send cross-origin)
   GET  /health  {"name", "version", "home", "ready", "models", "sessions", "guarded", ...}; 503 while loading
-/speak and /stop also take ?tty=X (with that header): a reply or a prompt closes that session's menus.
+  GET  /session?tty=X  {"open", "guarded"} for one terminal (fast: scans only that tty)
   GET  /config  voice-input settings
+/guard, and ?tty=X on /speak and /stop (a reply or prompt closes that session's menus), need the
+X-Claude-Speak-Hook header, which a web page can't send to localhost without a CORS preflight.
 
-State lives in CLAUDE_SPEAK_HOME (the plugin's data dir): voices/, off, max_chars, speed,
-unload_minutes, speakd.log. Kokoro (English) stays loaded; OmniVoice (Bosnian) loads on first use and
-unloads when idle or once no Claude Code session is open.
+State lives in CLAUDE_SPEAK_HOME (the plugin's data dir). Kokoro (English) stays loaded; OmniVoice
+(Bosnian) and Whisper load on first use and unload when idle or once no Claude Code session is open.
 """
 
 import json
@@ -31,7 +30,7 @@ import stt
 from guard import PromptGuard, is_tty
 from jobs import CancelRing, Job, JobBoard, queue_age_limit
 from models import ModelManager
-from sessions import SessionWatch
+from sessions import SessionWatch, runs_claude
 from player import Player
 from settings import (HOME, MIN_SPEED, VOICES_DIR, char_limit, speech_speed, stt_language,
                       unload_minutes)
@@ -253,18 +252,29 @@ def make_handler(speaker: Speaker):
             self._json(200, result)
 
         def do_GET(self):
+            path, _, query = self.path.partition("?")
+            if path == "/session":
+                return self._session(parse_qs(query).get("tty", [None])[0])
             if self.path == "/config":
                 return self._json(200, {"lang": stt_language(), "voice_input": stt.is_installed(HOME)})
             if self.path != "/health":
                 return self._reply(404)
             ready = speaker.ready.is_set()
-            speaker.sessions.refresh()  # the hotkey helper must not act on a session that just closed
             ttys = [x.tty for x in speaker.sessions.sessions]
             body = json.dumps({"name": NAME, "version": VERSION, "home": HOME, "ready": ready,
                                "models": speaker.models.loaded(), "unload_minutes": unload_minutes(),
                                "voice_input": stt.is_installed(HOME),
                                "sessions": ttys, "guarded": speaker.guard.guarded(ttys)}).encode()
             self._reply(200 if ready else 503, body)
+
+        def _session(self, tty: str | None):  # hotkey helper: one tty's scan is ~20 ms, all is ~0.2 s+
+            if not is_tty(tty):
+                return self._reply(400)
+            is_open = runs_claude(tty)
+            if is_open is None:
+                return self._reply(503)
+            self._json(200, {"tty": tty, "open": is_open, "guarded": tty in speaker.guard.guarded(),
+                             "voice_input": stt.is_installed(HOME)})
 
         def _json(self, code: int, obj: dict):
             self._reply(code, json.dumps(obj).encode())
