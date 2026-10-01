@@ -1,5 +1,5 @@
 {
-  "description": "claude-speak: speak replies aloud (Stop), stop speaking when you type (UserPromptSubmit), keep the daemon in sync after updates (SessionStart)",
+  "description": "claude-speak: speak replies aloud (Stop), stop speaking when you type (UserPromptSubmit), keep the daemon in sync after updates (SessionStart), and track open permission prompts and questions so voice input never types into one",
   "hooks": {
     "Stop": [
       {
@@ -32,7 +32,56 @@
             "type": "command",
             "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/sync.sh\"",
             "async": true,
-            "timeout": 30
+            "timeout": 120
+          }
+        ]
+      }
+    ],
+    "PermissionRequest": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/tts.sh\" guard",
+            "async": true,
+            "timeout": 3
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "AskUserQuestion|ExitPlanMode",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/tts.sh\" guard",
+            "async": true,
+            "timeout": 3
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/tts.sh\" guard",
+            "async": true,
+            "timeout": 3
+          }
+        ]
+      }
+    ],
+    "PostToolUseFailure": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/tts.sh\" guard",
+            "async": true,
+            "timeout": 3
           }
         ]
       }

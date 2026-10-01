@@ -32,5 +32,7 @@ jobs:
         run: python -m pip install numpy
       - name: Unit tests
         run: python -m unittest discover -s tests -v
-      - name: Shell tests, including sync.sh
+      - name: Shell tests, including sync.sh and the hotkey helper build
         run: bash tests/shell.test.sh
+      - name: Hotkey helper tests (Swift)
+        run: bash tests/helper/run.sh
