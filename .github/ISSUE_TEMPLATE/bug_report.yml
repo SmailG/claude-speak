@@ -1,0 +1,49 @@
+name: Bug report
+description: Something about spoken replies or /speak doesn't work as described.
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you heard (or didn't), and what you expected instead.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. /speak speed 1.2
+        2. Ask Claude a question with a long reply
+        3. ...
+    validations:
+      required: true
+  - type: input
+    id: status
+    attributes:
+      label: Output of /speak status
+      placeholder: "[speak] claude-speak 0.2.0 — speech ON — limit 2000 chars — ..."
+    validations:
+      required: true
+  - type: input
+    id: system
+    attributes:
+      label: macOS version and Mac model
+      placeholder: macOS 26.1, MacBook Pro M3
+    validations:
+      required: true
+  - type: dropdown
+    id: language
+    attributes:
+      label: Language of the reply
+      options: [English, Bosnian / Croatian / Serbian, Both, Not about speech]
+  - type: textarea
+    id: log
+    attributes:
+      label: Service log
+      description: >-
+        The last lines of speakd.log in ~/.claude/plugins/data/claude-speak-claude-speak/.
+        It records session id prefixes, lengths and timings. A "synth error" line also quotes the
+        first 60 characters of the text that failed: check it for anything private before posting.
+      render: text
