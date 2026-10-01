@@ -3,14 +3,16 @@
 
 import Foundation
 
-struct Health {
-    let sessions: [String]  // ttys of open Claude Code sessions
-    let guarded: [String]   // ttys showing a permission prompt or question
-    let voiceInput: Bool
+/// One terminal as the speech service sees it.
+struct TabState {
+    let runsClaude: Bool  // an interactive Claude Code session runs in it
+    let guarded: Bool     // it shows a permission prompt, question or form
+    let voiceInput: Bool  // Whisper is installed
 }
 
 final class Daemon: @unchecked Sendable {
     static let transcribeTimeout = 130.0
+    static let queryTimeout = 3.0  // localhost, but the service may be busy generating speech
 
     private let base: URL
 
@@ -18,12 +20,12 @@ final class Daemon: @unchecked Sendable {
         base = URL(string: "http://127.0.0.1:\(port)")!
     }
 
-    func health() -> Health? {
-        guard let (code, data) = request("health"), code == 200,
-              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
-        return Health(sessions: json["sessions"] as? [String] ?? [],
-                      guarded: json["guarded"] as? [String] ?? [],
-                      voiceInput: json["voice_input"] as? Bool ?? false)
+    /// nil when the service can't answer (not running, still loading, or the scan failed).
+    func tab(_ tty: String) -> TabState? {
+        guard let (code, data) = request("session?tty=\(tty)", timeout: Self.queryTimeout), code == 200,
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let open = json["open"] as? Bool, let guarded = json["guarded"] as? Bool else { return nil }
+        return TabState(runsClaude: open, guarded: guarded, voiceInput: json["voice_input"] as? Bool ?? false)
     }
 
     /// Silences speech (empty body = every session) and starts loading Whisper.
@@ -44,7 +46,7 @@ final class Daemon: @unchecked Sendable {
     }
 
     private func request(_ path: String, body: Data? = nil, timeout: Double = 1) -> (Int, Data)? {
-        var req = URLRequest(url: base.appendingPathComponent(path))
+        var req = URLRequest(url: URL(string: path, relativeTo: base)!)
         req.httpMethod = body == nil ? "GET" : "POST"
         req.httpBody = body
         req.timeoutInterval = timeout

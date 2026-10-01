@@ -3,7 +3,7 @@ import sys
 import unittest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "daemon"))
-from sessions import Session, SessionWatch, parse_sessions  # noqa: E402
+from sessions import Session, SessionWatch, parse_sessions, runs_claude  # noqa: E402
 
 # Shape of `ps -axo pid=,tty=,args=` on a Mac running Claude Code 2.1 (session ids made up).
 PS = """\
@@ -92,6 +92,25 @@ class SessionWatchTest(unittest.TestCase):
         self.assertEqual(len(self.watch.sessions), 3)
         self.assertFalse(self.watch.none_for(60))
 
+
+
+class RunsClaudeTest(unittest.TestCase):
+    def test_one_terminal_is_checked_by_its_own_scan(self):
+        asked = []
+
+        def scan(tty):
+            asked.append(tty)
+            return PS
+
+        self.assertTrue(runs_claude("ttys009", scan))
+        self.assertEqual(asked, ["ttys009"])
+
+    def test_a_terminal_with_only_a_shell_or_background_helper_is_not_a_session(self):
+        self.assertFalse(runs_claude("ttys011", lambda tty: PS))  # claude bg-spare
+        self.assertFalse(runs_claude("ttys099", lambda tty: PS))
+
+    def test_a_failed_scan_is_unknown(self):
+        self.assertIsNone(runs_claude("ttys009", lambda tty: None))
 
 if __name__ == "__main__":
     unittest.main()
