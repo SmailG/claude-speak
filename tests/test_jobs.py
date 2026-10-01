@@ -1,10 +1,12 @@
+import math
 import multiprocessing as mp
 import os
 import sys
 import unittest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "daemon"))
-from jobs import CancelRing, JobBoard, RING_SIZE, StaleFilter  # noqa: E402
+from jobs import (CancelRing, JobBoard, MIN_QUEUE_AGE_S, RING_SIZE, SLOWEST_CHARS_PER_S,  # noqa: E402
+                  StaleFilter, queue_age_limit)
 
 
 class FakeClock:
@@ -102,23 +104,51 @@ class JobBoardTest(unittest.TestCase):
         self.assertEqual(board.next_job(timeout=0).id, fresh.id)
         self.assertTrue(board.is_cancelled(old))
 
+    def test_job_keeps_its_own_wait_limit(self):
+        clock = FakeClock()
+        board = make_board(clock=clock, max_age_s=180)
+        long_wait = board.submit("long limit", "A", max_age_s=600)
+        short_wait = board.submit("default limit", "B")
+        clock.now += 300
+        self.assertEqual(board.next_job(timeout=0).id, long_wait.id)
+        self.assertIsNone(board.next_job(timeout=0))
+        self.assertTrue(board.is_cancelled(short_wait))
+
     def test_player_drops_a_reply_that_reaches_the_front_too_late(self):
         clock = FakeClock()
-        stale = StaleFilter(clock=clock, max_age_s=180)
-        queued_at = clock.now
+        stale = StaleFilter(clock=clock)
+        expires_at = clock.now + 180
         clock.now += 181
-        self.assertTrue(stale.is_stale(7, queued_at))
-        self.assertTrue(stale.is_stale(7, queued_at))  # every later chunk of it too
+        self.assertTrue(stale.is_stale(7, expires_at))
+        self.assertTrue(stale.is_stale(7, expires_at))  # every later chunk of it too
 
     def test_player_finishes_a_reply_that_started_in_time(self):
         clock = FakeClock()
-        stale = StaleFilter(clock=clock, max_age_s=180)
-        queued_at = clock.now
+        stale = StaleFilter(clock=clock)
+        expires_at = clock.now + 180
         clock.now += 170
-        self.assertFalse(stale.is_stale(7, queued_at))
+        self.assertFalse(stale.is_stale(7, expires_at))
         clock.now += 60  # long reply: later chunks arrive past the limit
-        self.assertFalse(stale.is_stale(7, queued_at))
-        self.assertTrue(stale.is_stale(8, queued_at))  # but the next job is judged afresh
+        self.assertFalse(stale.is_stale(7, expires_at))
+        self.assertTrue(stale.is_stale(8, expires_at))  # but the next job is judged afresh
+
+    def test_player_honours_a_long_per_job_limit(self):
+        clock = FakeClock()
+        stale = StaleFilter(clock=clock)
+        clock.now += 500
+        self.assertFalse(stale.is_stale(7, clock.now - 500 + queue_age_limit(10_000)))
+
+
+class QueueAgeLimitTest(unittest.TestCase):
+    def test_default_length_keeps_the_floor(self):
+        self.assertEqual(queue_age_limit(2000), MIN_QUEUE_AGE_S)
+
+    def test_long_limit_covers_one_full_reply_at_normal_speed(self):
+        self.assertGreaterEqual(queue_age_limit(10_000), 10_000 / SLOWEST_CHARS_PER_S)
+        self.assertGreater(queue_age_limit(10_000), queue_age_limit(5_000))
+
+    def test_no_length_limit_never_drops(self):
+        self.assertEqual(queue_age_limit(0), math.inf)
 
     def test_ring_wraps_without_false_positives(self):
         ring = CancelRing.create(mp.get_context("spawn"))

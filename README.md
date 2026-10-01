@@ -32,8 +32,9 @@ Replies are spoken automatically once setup is done.
 |---|---|
 | `/speak` | Replay the last reply of this session (works while muted) |
 | `/speak off` / `/speak on` | Mute / unmute spoken replies (`off` also stops current speech) |
-| `/speak status` | Version, mute state, length limit, service state |
+| `/speak status` | Version, mute state, length limit, speed, service state |
 | `/speak limit N` | Speak at most N characters per reply (default 2000; `0` = no limit) |
+| `/speak speed X` | Speaking speed, `1.0`–`1.5` (default 1.0 ≈ 187 words per minute in English) |
 | `/speak setup` | Install or repair the speech service |
 | `/speak uninstall` | Stop and remove the speech service |
 
@@ -43,13 +44,19 @@ The plugin skill is `/claude-speak:speak`; plain `/speak` works as long as no ot
 
 - **Typing stops speech** — but only the speech of the session you type in.
 - **Several sessions** — a reply from another session waits until the current one finishes;
-  a new reply from the same session replaces its own older one. Replies that waited more than
-  3 minutes are dropped.
+  a new reply from the same session replaces its own older one. A reply that waits longer than
+  one maximum-length reply takes to speak (at least 3 minutes; never with `limit 0`) is
+  dropped, so busy sessions can't stack speech. That covers one long reply ahead of yours,
+  not two.
 - **Headless runs** (`claude -p`, Agent SDK, background summarizers) are never spoken.
 - **What is read**: code blocks, tables, URLs and file paths are skipped; long replies are cut
   at a sentence end at the length limit.
 - **Language** is decided per reply: Bosnian/Croatian/Serbian text goes to OmniVoice, everything
   else to Kokoro (`af_heart`). Typical time to first audio: English ~0.3 s, Bosnian ~3 s.
+- **Speed** applies to the next reply. Both engines speed up natively, so pitch stays the same.
+  Bosnian is capped at 1.3×: above that, OmniVoice synthesis falls behind playback (gaps between
+  sentences), and at 1.5× Whisper transcribes 6–30% of its words wrongly. English at 1.5× is
+  ~280 words per minute.
 
 ## How it works
 

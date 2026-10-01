@@ -5,7 +5,7 @@ Keeps Kokoro (English) and OmniVoice (Bosnian/Croatian/Serbian, cloned voice) re
   POST /stop    UserPromptSubmit payload (session_id, prompt); empty body = stop everything
   GET  /health  {"name", "version", "home", "ready"}; 200 when ready, 503 while loading
 
-State lives in CLAUDE_SPEAK_HOME (the plugin's data dir): voices/, off, max_chars, speakd.log.
+State lives in CLAUDE_SPEAK_HOME (the plugin's data dir): voices/, off, max_chars, speed, speakd.log.
 """
 
 import json
@@ -18,15 +18,20 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import numpy as np
 
-from jobs import CancelRing, Job, JobBoard
+from jobs import CancelRing, Job, JobBoard, queue_age_limit
 from player import Player
 from text import CONTROL_MARKER, MERGE_TO, is_bosnian, parse_payload, prepare, split_chunks
 
-NAME, VERSION = "claude-speak", "0.1.0"
+NAME, VERSION = "claude-speak", "0.2.0"
 HOST, PORT = "127.0.0.1", int(os.environ.get("CLAUDE_SPEAK_PORT", "8765"))
 HOME = os.environ.get("CLAUDE_SPEAK_HOME") or os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 MAX_CHARS = int(os.environ.get("CLAUDE_SPEAK_MAX_CHARS", "2000"))
 LIMIT_FILE = os.path.join(HOME, "max_chars")  # written by `/speak limit N`; 0 = no limit
+SPEED_FILE = os.path.join(HOME, "speed")      # written by `/speak speed X`
+MIN_SPEED, MAX_SPEED = 1.0, 1.5
+# OmniVoice regenerates speech into a shorter token budget: above 1.3 playback stalls between
+# chunks (synthesis stops outrunning playback) and from 1.5 words get garbled (Whisper WER 6-30%).
+BS_MAX_SPEED = 1.3  # keep in sync with scripts/speakctl.sh
 LOG_PATH, LOG_MAX_BYTES = os.path.join(HOME, "speakd.log"), 512 * 1024
 
 EN_MODEL, EN_VOICE, EN_LANG = "mlx-community/Kokoro-82M-bf16", "af_heart", "a"
@@ -47,6 +52,15 @@ def char_limit() -> int:
             return max(0, int(f.read().strip()))
     except (OSError, ValueError):
         return MAX_CHARS
+
+
+def speech_speed() -> float:
+    """Speaking-rate multiplier from the /speak speed file, clamped; 1.0 if missing or invalid."""
+    try:
+        with open(SPEED_FILE, encoding="utf-8") as f:
+            return min(MAX_SPEED, max(MIN_SPEED, float(f.read().strip())))
+    except (OSError, ValueError):
+        return MIN_SPEED
 
 
 def trim_log() -> None:
@@ -78,7 +92,7 @@ class Speaker:
             return
         if text.startswith(CONTROL_MARKER):  # Claude echoing /speak output: don't cut a replay
             return
-        self.board.submit(text, session)
+        self.board.submit(text, session, queue_age_limit(char_limit()))
 
     def stop_from(self, session: str | None, prompt: str = "") -> None:
         """A prompt only silences its own session; typing /speak never stops (it may be replaying)."""
@@ -103,18 +117,19 @@ class Speaker:
         # otherwise assumes "Nice to meet you." = 1 s and pads the estimate by 15%.
         self.bs_est = RuleDurationEstimator()
         for bosnian in (False, True):  # warm up both pipelines (consume the generators)
-            list(self._synth("Spreman.", bosnian))
+            list(self._synth("Spreman.", bosnian, MIN_SPEED))
         self.ready.set()
         print(f"{NAME} {VERSION}: models loaded (home {HOME})", flush=True)
 
-    def _synth(self, chunk: str, bosnian: bool):
+    def _synth(self, chunk: str, bosnian: bool, speed: float):
+        """Both engines speed up natively (no resampling, so pitch is unchanged)."""
         if bosnian:
             tokens = self.bs_est.estimate_duration(chunk, self.bs_ref_text, self.bs_ref.shape[0])
             results = self.bs.generate(text=chunk, lang_code=BS_LANG,
                                        ref_tokens=self.bs_ref, ref_text=self.bs_ref_text,
-                                       duration_s=max(1, int(tokens)) / OMNI_TOKENS_PER_SEC)
+                                       duration_s=max(1, int(tokens)) / OMNI_TOKENS_PER_SEC / speed)
         else:
-            results = self.en.generate(text=chunk, voice=EN_VOICE, lang_code=EN_LANG)
+            results = self.en.generate(text=chunk, voice=EN_VOICE, lang_code=EN_LANG, speed=speed)
         for r in results:
             yield np.array(r.audio, dtype=np.float32), r.sample_rate
 
@@ -137,9 +152,10 @@ class Speaker:
         """Generate one job's audio into the player; returns seconds of audio sent."""
         text = prepare(job.text, char_limit())
         bosnian = is_bosnian(text)
+        speed = min(speech_speed(), BS_MAX_SPEED) if bosnian else speech_speed()
         trim_log()
         print(f"reply: session={short(job.session)} engine={'omnivoice/bs' if bosnian else 'kokoro/en'} "
-              f"chars={len(text)} waited={time.monotonic() - job.queued_at:.1f}s", flush=True)
+              f"chars={len(text)} speed={speed:g} waited={time.monotonic() - job.queued_at:.1f}s", flush=True)
         chunks = split_chunks(text, MERGE_TO["bs" if bosnian else "en"])
         started = time.monotonic()
         synth_s = audio_s = 0.0
@@ -148,8 +164,8 @@ class Speaker:
                 break
             chunk_t0 = time.monotonic()
             try:
-                for audio, sr in self._synth(chunk, bosnian):
-                    self.player.send((job.id, audio, sr, started if audio_s == 0 else None, job.queued_at))
+                for audio, sr in self._synth(chunk, bosnian, speed):
+                    self.player.send((job.id, audio, sr, started if audio_s == 0 else None, job.expires_at))
                     audio_s += len(audio) / sr
             except Exception as e:  # keep the daemon alive on a bad chunk
                 print(f"synth error: {e!r} on {chunk[:60]!r}", flush=True)
