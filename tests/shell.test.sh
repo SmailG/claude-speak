@@ -136,7 +136,7 @@ if [ -x /usr/libexec/PlistBuddy ]; then
   echo "# old" >> "$SD/daemon/text.py"; sync_run
   check "sync: another install's service is left alone" "1" "$(kicks)"
 else
-  echo "SKIP: 3 sync.sh checks (need macOS PlistBuddy)"
+  echo "SKIP: 4 sync.sh checks (need macOS PlistBuddy)"
 fi
 
 echo "shell tests: $PASS passed, $FAIL failed"
