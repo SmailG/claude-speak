@@ -28,7 +28,7 @@ def _reader(conn: Any, local: queue.Queue) -> None:
 
 
 def player_main(conn: Any, ring_ids: Any, ring_cursor: Any) -> None:
-    """Child process: play (job_id, audio, sr, t0, queued_at) items; skip cancelled or stale jobs."""
+    """Child process: play (job_id, audio, sr, t0, expires_at) items; skip cancelled or stale jobs."""
     import numpy as np
     import sounddevice as sd
 
@@ -38,10 +38,10 @@ def player_main(conn: Any, ring_ids: Any, ring_cursor: Any) -> None:
     stale = StaleFilter()
     stream, stream_sr = None, None
     while True:
-        job_id, audio, sr, t0, queued_at = local.get()
-        if stale.is_stale(job_id, queued_at):
+        job_id, audio, sr, t0, expires_at = local.get()
+        if stale.is_stale(job_id, expires_at):
             if t0 is not None:
-                print(f"dropped a reply that waited {time.monotonic() - queued_at:.0f}s", flush=True)
+                print("dropped a reply that waited past its limit", flush=True)
             continue
         if job_id in ring:
             if stream is not None and stream.active and local.empty():

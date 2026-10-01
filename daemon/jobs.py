@@ -4,21 +4,25 @@ Rules:
   - a new reply from a session cancels that session's queued/playing jobs (it replaces them)
   - a reply from another session waits its turn (FIFO) instead of interrupting
   - a stop from a session cancels only that session's jobs; stop-all cancels everything
-  - jobs that waited longer than MAX_QUEUE_AGE_S are dropped (busy sessions can't stack speech);
-    checked both before generation and when a job's audio reaches the front of the player
+  - a job that waits too long is dropped (busy sessions can't stack speech). The limit follows
+    the length limit (queue_age_limit) and travels with the job as expires_at, because it is
+    checked both before generation and when the job's audio reaches the front of the player
   - a generated job stays cancellable until its audio has had time to play (generation is
     usually far faster than playback, so "done generating" is not "done speaking")
 
 Cancelled job ids live in a small ring in shared memory so the player process can see them.
 """
 
+import math
 import threading
 import time
 from collections import deque
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
-MAX_QUEUE_AGE_S = 180
+MIN_QUEUE_AGE_S = 180
+SLOWEST_CHARS_PER_S = 14.0  # Bosnian (OmniVoice) at speed 1.0 measures ~14.7; English ~16.4
+QUEUE_AGE_SLACK_S = 30      # generation lag before the reply ahead starts playing
 RING_SIZE = 64
 PLAY_SLACK_S = 5.0  # margin on the playback-end estimate; over-cancelling a finished job is harmless
 
@@ -42,6 +46,16 @@ class CancelRing:
         return job_id in self.ids[:]  # ids start at 1; 0 marks an empty slot
 
 
+def queue_age_limit(char_limit: int) -> float:
+    """How long a reply may wait: enough to sit behind one maximum-length reply at normal speed.
+
+    char_limit 0 means replies have no length limit, so no wait can be called too long.
+    """
+    if char_limit <= 0:
+        return math.inf
+    return max(MIN_QUEUE_AGE_S, char_limit / SLOWEST_CHARS_PER_S + QUEUE_AGE_SLACK_S)
+
+
 class StaleFilter:
     """Player side of the age limit: generation outruns playback, so the backlog waits there.
 
@@ -49,15 +63,15 @@ class StaleFilter:
     always finishes.
     """
 
-    def __init__(self, clock: Callable[[], float] = time.monotonic, max_age_s: float = MAX_QUEUE_AGE_S):
-        self.clock, self.max_age_s = clock, max_age_s
+    def __init__(self, clock: Callable[[], float] = time.monotonic):
+        self.clock = clock
         self._current: int | None = None
         self._stale = False
 
-    def is_stale(self, job_id: int, queued_at: float) -> bool:
+    def is_stale(self, job_id: int, expires_at: float) -> bool:
         if job_id != self._current:
             self._current = job_id
-            self._stale = self.clock() - queued_at > self.max_age_s
+            self._stale = self.clock() > expires_at
         return self._stale
 
 
@@ -67,11 +81,12 @@ class Job:
     text: str
     session: str | None
     queued_at: float = field(default_factory=time.monotonic)
+    expires_at: float = math.inf  # dropped if still waiting after this (monotonic clock)
 
 
 class JobBoard:
     def __init__(self, ring: CancelRing, clock: Callable[[], float] = time.monotonic,
-                 max_age_s: float = MAX_QUEUE_AGE_S):
+                 max_age_s: float = MIN_QUEUE_AGE_S):
         self.ring, self.clock, self.max_age_s = ring, clock, max_age_s
         self._cond = threading.Condition()
         self._queue: deque[Job] = deque()
@@ -80,11 +95,14 @@ class JobBoard:
         self._player_busy_until = 0.0
         self._next_id = 1
 
-    def submit(self, text: str, session: str | None) -> Job:
+    def submit(self, text: str, session: str | None, max_age_s: float | None = None) -> Job:
+        """Queue a reply; max_age_s (default: the board's) bounds how long it may wait."""
         with self._cond:
             if session is not None:
                 self._cancel_where(lambda j: j.session == session)
-            job = Job(self._next_id, text, session, self.clock())
+            now = self.clock()
+            age = self.max_age_s if max_age_s is None else max_age_s
+            job = Job(self._next_id, text, session, now, now + age)
             self._next_id += 1
             self._queue.append(job)
             self._live[job.id] = job
@@ -108,7 +126,7 @@ class JobBoard:
                     job = self._queue.popleft()
                     if job.id in self.ring:
                         continue
-                    if self.clock() - job.queued_at > self.max_age_s:
+                    if self.clock() > job.expires_at:
                         self._cancel_where(lambda j: j.id == job.id)
                         continue
                     return job

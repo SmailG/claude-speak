@@ -67,6 +67,21 @@ for bad in "limit" "limit abc" "limit 999999" "limit 5; touch $TMP/pwned"; do
   check "rejects '$bad'" "100" "$(cat "$DATA/max_chars")"
 done
 check "no injection" "no" "$([ -e "$TMP/pwned" ] && echo yes || echo no)"
+for good in "1:1" "1.0:1" "1.25:1.25" "1.5:1.5" "1.50:1.5"; do
+  ctl "speed ${good%%:*}" >/dev/null
+  check "speed accepts ${good%%:*}" "${good##*:}" "$(cat "$DATA/speed")"
+done
+for bad in "speed" "speed 0.9" "speed 1.51" "speed 1.6" "speed 2" "speed .5" "speed 1." "speed abc" "speed 1.2; touch $TMP/pwned2"; do
+  ctl "$bad" >/dev/null
+  check "rejects '$bad'" "1.5" "$(cat "$DATA/speed")"
+done
+check "no injection via speed" "no" "$([ -e "$TMP/pwned2" ] && echo yes || echo no)"
+check "status shows speed and the Bosnian cap" "1" "$(ctl status | grep -c 'speed 1.5x (~280 wpm in English; Bosnian capped at 1.3x)')"
+ctl "speed 1.3" >/dev/null
+check "no cap note at 1.3" "0" "$(ctl status | grep -c 'capped')"
+ctl "speed 1.5" >/dev/null
+echo garbage > "$DATA/speed"
+check "corrupt speed file reads as 1x" "1" "$(ctl status | grep -c 'speed 1x')"
 check "status names plugin" "1" "$(ctl status | grep -c '^\[speak\] claude-speak ')"
 check "status sees own daemon" "1" "$(ctl status | grep -c 'service running')"
 check "unknown option" "1" "$(ctl bogus | grep -c 'Unknown option')"
