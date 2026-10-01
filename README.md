@@ -86,7 +86,8 @@ because other tools may use them; `/speak uninstall` prints how to remove them.
 
 Everything runs locally. Reply text goes only to the local service on `127.0.0.1`. `/speak`
 reads the current session's transcript in `~/.claude/projects/` to find the last reply. The
-service log records per reply only the session id prefix, engine, length and timings.
+service log records per reply only the session id prefix, engine, length and timings; when
+synthesis fails on a chunk, the error line quotes that chunk's first 60 characters.
 
 ## Licenses
 

@@ -1,5 +1,9 @@
 # Contributing
 
+By participating you agree to the [Code of Conduct](CODE_OF_CONDUCT.md). Report security issues
+privately, as described in [SECURITY.md](SECURITY.md). Pull requests use the template in
+`.github/`; a maintainer reviews and merges them.
+
 ## Layout
 
 | Path | Role |
