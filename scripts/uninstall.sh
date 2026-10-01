@@ -7,13 +7,24 @@
 DATA="${1:-${CLAUDE_PLUGIN_DATA:-}}"
 LABEL="com.claude-speak.daemon"
 PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
+HOTKEY="com.claude-speak.hotkey"
+HOTKEY_PLIST="$HOME/Library/LaunchAgents/$HOTKEY.plist"
+HOTKEY_APP="${CLAUDE_SPEAK_APP_DIR:-$HOME/Applications}/Claude Speak Hotkey.app"
 
 launchctl bootout "gui/$(id -u)/$LABEL" >/dev/null 2>&1 && echo "Stopped the speech service." \
   || echo "Speech service was not running."
 if [ -f "$PLIST" ]; then
   rm -f "$PLIST" && echo "Removed $PLIST."
 fi
+if [ -f "$HOTKEY_PLIST" ] || [ -d "$HOTKEY_APP" ]; then
+  launchctl bootout "gui/$(id -u)/$HOTKEY" >/dev/null 2>&1
+  rm -f "$HOTKEY_PLIST"
+  rm -rf "$HOTKEY_APP"
+  tccutil reset All "$HOTKEY" >/dev/null 2>&1  # its privacy permissions
+  echo "Removed the voice-input hotkey helper."
+fi
 [ -n "$DATA" ] && touch "$DATA/off" 2>/dev/null  # hooks stay quiet until you run /speak setup again
 echo "Now run: claude plugin uninstall claude-speak   (removes the plugin and its data dir)"
-echo "Optional, frees ~5 GB: 'uv tool uninstall mlx-audio', and delete these folders in ~/.cache/huggingface/hub:"
-echo "  models--mlx-community--Kokoro-82M-bf16, models--prince-canuma--Kokoro-82M, models--mlx-community--OmniVoice-bfloat16"
+echo "Optional, frees ~5 GB (~6.5 GB with voice input): 'uv tool uninstall mlx-audio', and delete these folders in ~/.cache/huggingface/hub:"
+echo "  models--mlx-community--Kokoro-82M-bf16, models--prince-canuma--Kokoro-82M, models--mlx-community--OmniVoice-bfloat16,"
+echo "  and for voice input models--mlx-community--whisper-large-v3-turbo, models--openai--whisper-large-v3-turbo"

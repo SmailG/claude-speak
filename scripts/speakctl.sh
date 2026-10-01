@@ -2,7 +2,7 @@
 # Backend of the /speak skill.
 #   speakctl.sh "<args>" <session_id> <data_dir>
 #   args: (none) = replay this session's last reply | on | off | status | limit N | speed X
-#         | unload N | lang X | setup [input] | uninstall
+#         | unload N | lang X | hotkey X | autosend on|off | setup [input] | uninstall
 # The skill passes all its arguments as one string ($1); it is re-split here.
 # Every line starts with "[speak]": the daemon never speaks replies with that marker, so
 # Claude echoing this output can't interrupt a replay.
@@ -18,6 +18,8 @@ EN_WPM=187           # English words per minute measured at speed 1
 DEFAULT_UNLOAD=10    # keep in sync with DEFAULT_UNLOAD_MIN in daemon/settings.py
 MAX_UNLOAD=1440
 LANG_RE='^(auto|bs|hr|sr|en)$'   # LANGUAGES in daemon/settings.py
+HOTKEY_RE='^(right-option|right-command|fn|off)$'   # Hotkey in helper/Gate.swift
+HOTKEY_AGENT="com.claude-speak.hotkey"
 VERSION=$(jq -r '.version // "?"' "$ROOT/.claude-plugin/plugin.json" 2>/dev/null)
 
 say() { echo "[speak] $*"; }
@@ -28,6 +30,8 @@ LIMIT_FILE="$DATA/max_chars"
 SPEED_FILE="$DATA/speed"
 UNLOAD_FILE="$DATA/unload_minutes"
 LANG_FILE="$DATA/stt_lang"
+HOTKEY_FILE="$DATA/hotkey"
+AUTOSEND_FILE="$DATA/autosend"
 
 daemon_state() {
   health=$(curl -s --max-time 1 "http://127.0.0.1:$PORT/health" 2>/dev/null)
@@ -88,6 +92,33 @@ lang_state() {
   echo "voice input language: $v"
 }
 
+hotkey_state() {
+  local v
+  v=$(tr -d '[:space:]' < "$HOTKEY_FILE" 2>/dev/null)
+  [[ "$v" =~ $HOTKEY_RE ]] || v=right-option
+  echo "$v"
+}
+
+autosend_state() {
+  [ "$(tr -d '[:space:]' < "$AUTOSEND_FILE" 2>/dev/null)" = "on" ] && echo on || echo off
+}
+
+# "Voice input: double-tap right-option · autosend off · language bs · ready" (only once set up)
+input_state() {
+  local lang helper missing
+  [ -f "$DATA/models/whisper/config.json" ] || return
+  lang=$(tr -d '[:space:]' < "$LANG_FILE" 2>/dev/null); [[ "$lang" =~ $LANG_RE ]] || lang=auto
+  if ! launchctl print "gui/$(id -u)/$HOTKEY_AGENT" >/dev/null 2>&1; then
+    helper="hotkey helper not running (run /speak setup input)"
+  else
+    missing=$(jq -r '[(if .input_monitoring then empty else "Input Monitoring" end),
+                      (if .microphone == "granted" then empty else "Microphone" end)] | join(", ")' \
+              "$DATA/hotkey_status.json" 2>/dev/null)
+    if [ -n "$missing" ]; then helper="needs $missing (System Settings > Privacy & Security)"; else helper="ready"; fi
+  fi
+  echo "Voice input: double-tap $(hotkey_state) · autosend $(autosend_state) · language $lang · $helper"
+}
+
 # Last final-text reply of this session, from its transcript (works while muted and across
 # daemon restarts). Skips earlier /speak echoes and subagent (sidechain) entries.
 last_reply_json() {
@@ -125,7 +156,8 @@ case "$ACTION" in
           say "Speech OFF (/speak still replays on demand)" ;;
   status) [ -e "$MUTE" ] && s=OFF || s=ON
           say "claude-speak $VERSION — speech $s — $(limit_state) — $(speed_state) — $(daemon_state)"
-          mem=$(memory_state); [ -n "$mem" ] && say "$mem — $(unload_state)" ;;
+          mem=$(memory_state); [ -n "$mem" ] && say "$mem — $(unload_state)"
+          inp=$(input_state); [ -n "$inp" ] && say "$inp" ;;
   limit)  if [[ "$VALUE" =~ ^[0-9]+$ ]] && [ "$VALUE" -le "$MAX_LIMIT" ]; then
             printf '%s\n' "$((10#$VALUE))" > "$LIMIT_FILE"; say "Speech $(limit_state) (0 = no limit)"
           else
@@ -146,12 +178,27 @@ case "$ACTION" in
           else
             say "Usage: /speak lang auto|bs|hr|sr|en  (auto lets Whisper detect it; short Bosnian clips may come back as Serbian in Cyrillic, so bs is safer). Currently: $(lang_state)"
           fi ;;
+  hotkey) if [[ "$VALUE" =~ $HOTKEY_RE ]]; then
+            printf '%s\n' "$VALUE" > "$HOTKEY_FILE"
+            launchctl kickstart -k "gui/$(id -u)/$HOTKEY_AGENT" >/dev/null 2>&1
+            say "Voice input hotkey: $VALUE$([ "$VALUE" = off ] || echo " (double-tap it in a Claude Code tab)")"
+            [ "$VALUE" = fn ] && say "Note: other apps that use a double Fn (Wispr Flow, macOS dictation) also react to it inside Claude Code tabs."
+          else
+            say "Usage: /speak hotkey right-option|right-command|fn|off. Currently: $(hotkey_state)"
+          fi ;;
+  autosend) if [[ "$VALUE" =~ ^(on|off)$ ]]; then
+            printf '%s\n' "$VALUE" > "$AUTOSEND_FILE"
+            if [ "$VALUE" = on ]; then say "Voice input autosend on: the transcript is sent right away"
+            else say "Voice input autosend off: the transcript waits in the prompt for you to edit and press Enter"; fi
+          else
+            say "Usage: /speak autosend on|off. Currently: $(autosend_state)"
+          fi ;;
   setup)  case "$VALUE" in
             "") say "SETUP" ;;
             input) say "SETUP input" ;;
             *) say "Usage: /speak setup  (speech)  or  /speak setup input  (local voice input, +1.5 GB)" ;;
           esac ;;
   uninstall) bash "$ROOT/scripts/uninstall.sh" "$DATA" | sed 's/^/[speak] /' ;;
-  *)      say "Unknown option '$ACTION'. Use: /speak (replay) | on | off | status | limit N | speed X | unload N | lang X | setup [input] | uninstall" ;;
+  *)      say "Unknown option '$ACTION'. Use: /speak (replay) | on | off | status | limit N | speed X | unload N | lang X | hotkey X | autosend on|off | setup [input] | uninstall" ;;
 esac
 exit 0

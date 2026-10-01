@@ -41,14 +41,23 @@ requests() { grep -c '^/' "$LOG" 2>/dev/null || true; }  # count requests, not l
 # --- tts.sh: forwards in interactive sessions ...
 echo '{"session_id":"s1","last_assistant_message":"hi"}' | CLAUDE_CODE_ENTRYPOINT=cli CLAUDE_PLUGIN_DATA=$DATA bash "$TTS" speak
 check "speak forwarded (cli)" "/speak" "$(grep -m1 -o '^/[a-z]*' "$LOG")"
+check "tty param is a terminal name or empty" "1" "$(grep -cE '^/speak\?tty=(ttys[0-9]+)? ' "$LOG")"
 : > "$LOG"; echo '{"session_id":"s1","prompt":"x"}' | CLAUDE_CODE_ENTRYPOINT=cli CLAUDE_PLUGIN_DATA=$DATA bash "$TTS" stop
-check "stop forwards payload with session" "s1" "$(grep -m1 '^/stop ' "$LOG" | cut -d' ' -f2- | jq -r .session_id)"
-# ... and stays silent for headless runs and when muted
-n=$(requests)
+check "stop forwards payload with session" "s1" "$(grep -m1 '^/stop?' "$LOG" | cut -d' ' -f2- | jq -r .session_id)"
+: > "$LOG"; echo '{"hook_event_name":"PermissionRequest","tool_name":"Bash"}' | CLAUDE_CODE_ENTRYPOINT=cli CLAUDE_PLUGIN_DATA=$DATA bash "$TTS" guard
+check "guard forwards the hook event" "PermissionRequest" "$(grep -m1 '^/guard?' "$LOG" | cut -d' ' -f2- | jq -r .hook_event_name)"
+if [ "$(uname)" = Darwin ]; then  # a real terminal: the tty of the process that ran the hook
+  : > "$LOG"; script -q /dev/null bash -c "echo '{}' | CLAUDE_CODE_ENTRYPOINT=cli CLAUDE_PLUGIN_DATA=$DATA bash '$TTS' guard" </dev/null >/dev/null
+  check "guard reports the session's tty" "1" "$(grep -cE '^/guard\?tty=ttys[0-9]+ ' "$LOG")"
+fi
+# ... stays silent for headless runs, and when muted only closes the session's menus
+: > "$LOG"
 echo '{"last_assistant_message":"hi"}' | CLAUDE_CODE_ENTRYPOINT=sdk-cli CLAUDE_PLUGIN_DATA=$DATA bash "$TTS" speak
 echo '{"prompt":"x"}' | CLAUDE_CODE_ENTRYPOINT=sdk-py CLAUDE_PLUGIN_DATA=$DATA bash "$TTS" stop
-touch "$DATA/off"; echo '{"last_assistant_message":"hi"}' | CLAUDE_CODE_ENTRYPOINT=cli CLAUDE_PLUGIN_DATA=$DATA bash "$TTS" speak
-check "headless + muted send nothing" "$n" "$(requests)"; rm -f "$DATA/off"
+echo '{}' | CLAUDE_CODE_ENTRYPOINT=sdk-py CLAUDE_PLUGIN_DATA=$DATA bash "$TTS" guard
+check "headless sends nothing" "0" "$(requests)"
+touch "$DATA/off"; echo '{"hook_event_name":"Stop","last_assistant_message":"hi"}' | CLAUDE_CODE_ENTRYPOINT=cli CLAUDE_PLUGIN_DATA=$DATA bash "$TTS" speak
+check "muted: no speech, only the guard" "/guard" "$(grep -o '^/[a-z]*' "$LOG" | tr '\n' ' ' | sed 's/ $//')"; rm -f "$DATA/off"
 
 # --- tts.sh with the daemon down: fast, silent, exit 0
 start=$(python3 -c 'import time; print(time.time())')
@@ -57,7 +66,12 @@ fast=$(python3 -c "import time; print(time.time() - $start < 1.5)")
 check "daemon down: exit 0" "0" "$rc"; check "daemon down: no output" "" "$out"; check "daemon down: fast" "True" "$fast"
 
 # --- speakctl: valid options change state, invalid ones don't
-ctl() { bash "$CTL" "$1" "${2:-}" "$DATA"; }
+# speakctl talks to launchd about the hotkey helper: give it a fake launchctl that logs its calls and
+# reports the agent loaded only while $TMP/agent_up exists.
+CTLBIN="$TMP/ctlbin"; mkdir -p "$CTLBIN"
+printf '#!/bin/sh\necho "$*" >> "%s/launchctl.log"\n[ "$1" != print ] || [ -e "%s/agent_up" ]\n' "$TMP" "$TMP" > "$CTLBIN/launchctl"
+chmod +x "$CTLBIN/launchctl"
+ctl() { PATH="$CTLBIN:$PATH" bash "$CTL" "$1" "${2:-}" "$DATA"; }
 check "off mutes" "yes" "$(ctl off >/dev/null; [ -e "$DATA/off" ] && echo yes || echo no)"
 check "on unmutes" "no" "$(ctl on >/dev/null; [ -e "$DATA/off" ] && echo yes || echo no)"
 check "limit 3000" "3000" "$(ctl 'limit 3000' >/dev/null; cat "$DATA/max_chars")"
@@ -101,6 +115,31 @@ for bad in "lang" "lang de" "lang BSX" "lang en; touch $TMP/pwned4"; do
   check "rejects '$bad'" "en" "$(cat "$DATA/stt_lang")"
 done
 check "no injection via lang" "no" "$([ -e "$TMP/pwned4" ] && echo yes || echo no)"
+for good in right-command fn off right-option; do
+  ctl "hotkey $good" >/dev/null
+  check "hotkey accepts $good" "$good" "$(cat "$DATA/hotkey")"
+done
+check "hotkey change restarts the helper" "4" "$(grep -c "kickstart -k gui/$(id -u)/com.claude-speak.hotkey" "$TMP/launchctl.log")"
+for bad in "hotkey" "hotkey left-option" "hotkey caps" "hotkey fn; touch $TMP/pwned5"; do
+  ctl "$bad" >/dev/null
+  check "rejects '$bad'" "right-option" "$(cat "$DATA/hotkey")"
+done
+check "no injection via hotkey" "no" "$([ -e "$TMP/pwned5" ] && echo yes || echo no)"
+check "fn warns about other double-Fn apps" "1" "$(ctl 'hotkey fn' | grep -c 'Wispr Flow')"
+check "right option gives no Fn warning" "0" "$(ctl 'hotkey right-option' | grep -c 'Wispr Flow')"
+ctl "autosend on" >/dev/null; check "autosend on" "on" "$(cat "$DATA/autosend")"
+for bad in "autosend" "autosend yes" "autosend off; touch $TMP/pwned6"; do
+  ctl "$bad" >/dev/null
+  check "rejects '$bad'" "on" "$(cat "$DATA/autosend")"
+done
+check "no injection via autosend" "no" "$([ -e "$TMP/pwned6" ] && echo yes || echo no)"
+check "status: no voice-input line before setup input" "0" "$(ctl status | grep -c 'Voice input')"
+mkdir -p "$DATA/models/whisper"; touch "$DATA/models/whisper/config.json"
+check "status: helper not running" "1" "$(ctl status | grep -c 'Voice input: double-tap right-option · autosend on · language en · hotkey helper not running')"
+touch "$TMP/agent_up"; echo '{"input_monitoring":true,"microphone":"not asked"}' > "$DATA/hotkey_status.json"
+check "status: missing permission named" "1" "$(ctl status | grep -c 'needs Microphone (System Settings')"
+echo '{"input_monitoring":true,"microphone":"granted"}' > "$DATA/hotkey_status.json"
+check "status: helper ready" "1" "$(ctl status | grep -c 'language en · ready$')"
 check "setup asks for speech setup" "[speak] SETUP" "$(ctl setup)"
 check "setup input asks for input setup" "[speak] SETUP input" "$(ctl 'setup input')"
 check "setup rejects other targets" "0" "$(ctl 'setup bogus' | grep -c '^\[speak\] SETUP')"
@@ -157,6 +196,19 @@ if [ -x /usr/libexec/PlistBuddy ]; then
   echo "# old" >> "$SD/daemon/text.py"; sync_run
   check "sync: changed source restarts once" "1" "$(kicks)"
   check "sync: changed source is copied" "0" "$(cmp -s "$ROOT/daemon/text.py" "$SD/daemon/text.py"; echo $?)"
+  if command -v swiftc >/dev/null; then  # the hotkey helper: built once, then left alone
+    HP="$SH/Library/LaunchAgents/com.claude-speak.hotkey.plist"
+    /usr/libexec/PlistBuddy -c "Add :ProgramArguments array" -c "Add :ProgramArguments:0 string x" \
+      -c "Add :ProgramArguments:1 string $SD" "$HP" >/dev/null
+    boots() { cat "$KICKS" 2>/dev/null | grep -c bootstrap; }
+    sync_run
+    check "sync: hotkey helper built" "1" "$(ls "$SH/Applications/Claude Speak Hotkey.app/Contents/MacOS" 2>/dev/null | grep -c ClaudeSpeakHotkey)"
+    check "sync: hotkey helper started" "1" "$(boots)"
+    sync_run; check "sync: unchanged helper is not rebuilt or restarted" "1" "$(boots)"
+    rm -f "$HP"
+  else
+    echo "SKIP: 3 hotkey helper sync checks (no swiftc)"
+  fi
   rm "$SH/Library/LaunchAgents/com.claude-speak.daemon.plist"; plist "/some/other/install"
   echo "# old" >> "$SD/daemon/text.py"; sync_run
   check "sync: another install's service is left alone" "1" "$(kicks)"

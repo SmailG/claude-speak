@@ -91,6 +91,17 @@ check_voice_input() {
   step "voice input is ready: the model loads on first use and unloads like the Bosnian voice"
 }
 
+install_hotkey() {
+  step "building the hotkey helper (~/Applications/Claude Speak Hotkey.app)"
+  local rc=0
+  bash "$ROOT/scripts/build-helper.sh" "$DATA" || rc=$?
+  [ "$rc" -eq 3 ] && return  # no Swift compiler: the message says how to get it
+  [ "$rc" -eq 0 ] || fail "building the hotkey helper failed (exit $rc)"
+  step "macOS now asks to allow Claude Speak Hotkey: Input Monitoring (to see the double tap),"
+  step "Microphone, and control of your terminal. Then double-tap Right Option in a Claude Code tab."
+  step "If no prompt appears: System Settings > Privacy & Security > Input Monitoring > + > ~/Applications/Claude Speak Hotkey"
+}
+
 install_files() {
   step "installing daemon into $DATA"
   mkdir -p "$DATA/daemon" "$DATA/voices"
@@ -164,6 +175,7 @@ case "$MODE" in
     start_daemon ;;
   input)
     install_whisper
-    check_voice_input ;;
+    check_voice_input
+    install_hotkey ;;
   *) fail "unknown setup mode '$MODE' (use: setup.sh <data_dir> [input])" ;;
 esac

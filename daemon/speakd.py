@@ -5,7 +5,9 @@ Keeps Kokoro (English) and OmniVoice (Bosnian/Croatian/Serbian, cloned voice) re
   POST /stop    UserPromptSubmit payload (session_id, prompt); empty body = stop everything
   POST /prepare      start loading Whisper (voice input is about to record)
   POST /transcribe   16-bit PCM WAV body -> {"text", "language"} (local Whisper; text is never logged)
-  GET  /health  {"name", "version", "home", "ready", "models", "sessions", ...}; 503 while loading
+  POST /guard?tty=X  hook JSON: a session opened or closed a menu that typing would answer
+  GET  /health  {"name", "version", "home", "ready", "models", "sessions", "guarded", ...}; 503 while loading
+/speak and /stop also take ?tty=X: a reply or a prompt means that session's menus are closed.
   GET  /config  voice-input settings
 
 State lives in CLAUDE_SPEAK_HOME (the plugin's data dir): voices/, off, max_chars, speed,
@@ -21,9 +23,11 @@ import threading
 import time
 import traceback
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from urllib.parse import parse_qs
 
 import engines
 import stt
+from guard import PromptGuard, is_tty
 from jobs import CancelRing, Job, JobBoard, queue_age_limit
 from models import ModelManager
 from sessions import SessionWatch
@@ -32,7 +36,7 @@ from settings import (HOME, MIN_SPEED, VOICES_DIR, char_limit, speech_speed, stt
                       unload_minutes)
 from text import CONTROL_MARKER, MERGE_TO, is_bosnian, parse_payload, prepare, split_chunks
 
-NAME, VERSION = "claude-speak", "0.3.1"
+NAME, VERSION = "claude-speak", "0.4.0"
 HOST, PORT = "127.0.0.1", int(os.environ.get("CLAUDE_SPEAK_PORT", "8765"))
 LOG_PATH, LOG_MAX_BYTES = os.path.join(HOME, "speakd.log"), 512 * 1024
 MAX_BODY_BYTES = 20 * 1024 * 1024
@@ -77,6 +81,7 @@ class Speaker:
                                    resident=("en",), release=engines.release)
         self._tasks: queue.SimpleQueue = queue.SimpleQueue()
         self.sessions = SessionWatch()
+        self.guard = PromptGuard()
         self._next_housekeeping = 0.0
         self.ready = threading.Event()
         threading.Thread(target=self._generate_loop, daemon=True).start()
@@ -196,19 +201,36 @@ def make_handler(speaker: Speaker):
             if length > MAX_BODY_BYTES:
                 return self._reply(413)
             body = self.rfile.read(length)
-            if self.path == "/transcribe":
+            path, _, query = self.path.partition("?")
+            tty = parse_qs(query).get("tty", [None])[0]
+            tty = tty if is_tty(tty) else None
+            if path == "/transcribe":
                 return self._transcribe(body)
-            if self.path == "/prepare":
+            if path == "/guard":
+                return self._guard(tty, body)
+            if path == "/prepare":
                 speaker.on_worker(lambda: speaker.models.get("stt") if stt.is_installed(HOME) else None,
                                   wait=False)
                 return self._reply(204)
             text, session, prompt = parse_payload(body)
-            if self.path == "/speak":
+            if path == "/speak":
                 speaker.speak(text.strip(), session)
-            elif self.path == "/stop":
+            elif path == "/stop":
                 speaker.stop_from(session, prompt)
             else:
                 return self._reply(404)
+            if tty:
+                speaker.guard.clear(tty)
+            self._reply(204)
+
+        def _guard(self, tty: str | None, body: bytes):
+            try:
+                payload = json.loads(body or b"{}")
+            except ValueError:
+                payload = None
+            if not tty or not isinstance(payload, dict):
+                return self._reply(400)
+            speaker.guard.event(tty, payload)
             self._reply(204)
 
         def _transcribe(self, body: bytes):
@@ -237,7 +259,8 @@ def make_handler(speaker: Speaker):
             body = json.dumps({"name": NAME, "version": VERSION, "home": HOME, "ready": ready,
                                "models": speaker.models.loaded(), "unload_minutes": unload_minutes(),
                                "voice_input": stt.is_installed(HOME),
-                               "sessions": [x.tty for x in speaker.sessions.sessions]}).encode()
+                               "sessions": [x.tty for x in speaker.sessions.sessions],
+                               "guarded": speaker.guard.guarded()}).encode()
             self._reply(200 if ready else 503, body)
 
         def _json(self, code: int, obj: dict):

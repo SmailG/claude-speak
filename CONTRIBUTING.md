@@ -8,12 +8,13 @@ privately, as described in [SECURITY.md](SECURITY.md). Pull requests use the tem
 
 | Path | Role |
 |---|---|
-| `hooks/hooks.json`, `hooks/tts.sh` | Stop / UserPromptSubmit hooks that forward payloads to the daemon |
-| `hooks/sync.sh` | SessionStart: copy new daemon code into the data dir after an update |
+| `hooks/hooks.json`, `hooks/tts.sh` | Stop / UserPromptSubmit hooks that forward payloads to the daemon; permission / question hooks that tell it which session shows a menu |
+| `hooks/sync.sh` | SessionStart: copy new daemon code into the data dir after an update; rebuild the hotkey helper if its source changed |
+| `helper/`, `scripts/build-helper.sh` | The voice-input hotkey helper (Swift app + LaunchAgent): `Gate.swift` holds the testable logic (double tap, where text may go, transcript cleanup) |
 | `skills/speak/SKILL.md`, `scripts/speakctl.sh` | The `/speak` command |
 | `scripts/setup.sh`, `scripts/uninstall.sh` | Install / remove the runtime, models and launchd service |
 | `scripts/platform.sh` | Apple Silicon / macOS version / Rosetta checks used by setup |
-| `daemon/` | `speakd.py` (HTTP + MLX worker loop), `engines.py` (load/run Kokoro and OmniVoice), `models.py` (lazy load, idle unload), `sessions.py` (open Claude Code sessions via `ps`), `stt.py` (Whisper voice input), `settings.py` (the per-user setting files), `player.py` (playback process), `jobs.py` (queueing), `text.py` (cleanup, routing, chunking) |
+| `daemon/` | `speakd.py` (HTTP + MLX worker loop), `engines.py` (load/run Kokoro and OmniVoice), `models.py` (lazy load, idle unload), `sessions.py` (open Claude Code sessions via `ps`), `guard.py` (sessions showing a menu), `stt.py` (Whisper voice input), `settings.py` (the per-user setting files), `player.py` (playback process), `jobs.py` (queueing), `text.py` (cleanup, routing, chunking) |
 
 ## Rules
 
@@ -29,8 +30,9 @@ privately, as described in [SECURITY.md](SECURITY.md). Pull requests use the tem
 ## Tests
 
 ```bash
-python3 -m unittest discover -s tests   # text + job queue + version sync (stdlib only)
+python3 -m unittest discover -s tests   # daemon logic + version sync (needs numpy)
 bash tests/shell.test.sh                # hooks and /speak against a fake daemon (needs jq)
+bash tests/helper/run.sh                # hotkey helper logic (macOS, needs swiftc)
 claude plugin validate --strict .claude-plugin/plugin.json
 ```
 
