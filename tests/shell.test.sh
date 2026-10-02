@@ -150,6 +150,11 @@ echo '{"input_monitoring":true,"microphone":"not asked"}' > "$DATA/hotkey_status
 check "status: missing permission named" "1" "$(ctl status | grep -c 'needs Microphone (System Settings')"
 echo '{"input_monitoring":true,"microphone":"granted"}' > "$DATA/hotkey_status.json"
 check "status: helper ready" "1" "$(ctl status | grep -c 'language en · ready$')"
+mkdir "$TMP/saved"; mv "$DATA/hotkey" "$DATA/autosend" "$DATA/stt_lang" "$TMP/saved/" 2>/dev/null
+out=$(ctl status 2>&1)  # settings never set: defaults, and no error text in /speak's output
+check "status: unset settings read as defaults" "1" "$(printf '%s' "$out" | grep -c 'double-tap right-option · autosend off · language auto')"
+check "status: unset settings print no error" "0" "$(printf '%s' "$out" | grep -c 'No such file')"
+mv "$TMP/saved/"* "$DATA/"
 check "setup asks for speech setup" "[speak] SETUP" "$(ctl setup)"
 check "setup input asks for input setup" "[speak] SETUP input" "$(ctl 'setup input')"
 check "setup rejects other targets" "0" "$(ctl 'setup bogus' | grep -c '^\[speak\] SETUP')"
