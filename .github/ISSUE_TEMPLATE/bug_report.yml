@@ -23,7 +23,7 @@ body:
     id: status
     attributes:
       label: Output of /speak status
-      placeholder: "[speak] claude-speak 0.2.0 — speech ON — limit 2000 chars — ..."
+      placeholder: "[speak] voice-conversation 0.2.0 — speech ON — limit 2000 chars — ..."
     validations:
       required: true
   - type: input
@@ -43,7 +43,7 @@ body:
     attributes:
       label: Service log
       description: >-
-        The last lines of speakd.log in ~/.claude/plugins/data/claude-speak-claude-speak/.
+        The last lines of speakd.log in ~/.claude/plugins/data/voice-conversation-voice-conversation/.
         It records session id prefixes, lengths and timings. A "synth error" line also quotes the
         first 60 characters of the text that failed: check it for anything private before posting.
       render: text

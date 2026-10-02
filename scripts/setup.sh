@@ -1,5 +1,5 @@
 #!/bin/bash
-# claude-speak setup: install the speech runtime, download voice models, start the daemon.
+# voice-conversation setup: install the speech runtime, download voice models, start the daemon.
 #   setup.sh <data_dir>         speech output (the /speak skill passes ${CLAUDE_PLUGIN_DATA})
 #   setup.sh <data_dir> input   add local voice input (Whisper, ~1.5 GB) to an existing setup
 # Idempotent and safe to re-run: installs are skipped when present, downloads resume.
@@ -16,9 +16,9 @@ source "$ROOT/scripts/platform.sh"
 if is_translated; then
   exec arch -arm64 /bin/bash "${BASH_SOURCE[0]}" "$@"
 fi
-LABEL="com.claude-speak.daemon"
+LABEL="com.voice-conversation.daemon"
 PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
-PORT="${CLAUDE_SPEAK_PORT:-8765}"
+PORT="${VOICE_CONVERSATION_PORT:-8765}"
 MLX_AUDIO_VERSION="0.5.7"
 SPACY_EN="en_core_web_sm @ https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl"
 READY_TIMEOUT_S=180
@@ -92,14 +92,14 @@ check_voice_input() {
 }
 
 install_hotkey() {
-  step "building the hotkey helper (~/Applications/Claude Speak Hotkey.app)"
+  step "building the hotkey helper (~/Applications/Voice Conversation Hotkey.app)"
   local rc=0
   bash "$ROOT/scripts/build-helper.sh" "$DATA" || rc=$?
   [ "$rc" -eq 3 ] && return  # no Swift compiler: the message says how to get it
   [ "$rc" -eq 0 ] || fail "building the hotkey helper failed (exit $rc)"
-  step "macOS now asks to allow Claude Speak Hotkey: Input Monitoring (to see the double tap),"
+  step "macOS now asks to allow Voice Conversation Hotkey: Input Monitoring (to see the double tap),"
   step "Microphone, and control of your terminal. Then double-tap Right Option in a Claude Code tab."
-  step "If no prompt appears: System Settings > Privacy & Security > Input Monitoring > + > ~/Applications/Claude Speak Hotkey"
+  step "If no prompt appears: System Settings > Privacy & Security > Input Monitoring > + > ~/Applications/Voice Conversation Hotkey"
 }
 
 install_files() {
@@ -123,8 +123,8 @@ write_plist() {
   <array><string>$PY</string><string>$DATA/daemon/speakd.py</string></array>
   <key>EnvironmentVariables</key>
   <dict>
-    <key>CLAUDE_SPEAK_HOME</key><string>$DATA</string>
-    <key>CLAUDE_SPEAK_PORT</key><string>$PORT</string>
+    <key>VOICE_CONVERSATION_HOME</key><string>$DATA</string>
+    <key>VOICE_CONVERSATION_PORT</key><string>$PORT</string>
     <key>HF_HUB_OFFLINE</key><string>1</string>
     <key>HOME</key><string>$HOME</string>
     <key>PATH</key><string>/usr/bin:/bin:/usr/sbin:/sbin</string>
@@ -154,10 +154,10 @@ start_daemon() {
   while [ "$waited" -lt "$READY_TIMEOUT_S" ]; do
     health=$(curl -s --max-time 1 "http://127.0.0.1:$PORT/health" || true)
     if [ "$(printf '%s' "$health" | jq -r '.ready' 2>/dev/null)" = "true" ]; then
-      [ "$(printf '%s' "$health" | jq -r '.home')" = "$DATA" ] || fail "a different claude-speak install answered on port $PORT"
+      [ "$(printf '%s' "$health" | jq -r '.home')" = "$DATA" ] || fail "a different voice-conversation install answered on port $PORT"
       curl -s --max-time 2 -o /dev/null --data-binary '{"last_assistant_message":"Speech is ready."}' \
         "http://127.0.0.1:$PORT/speak" || true
-      step "claude-speak is ready (took ${waited}s to load). Log: $DATA/speakd.log"
+      step "voice-conversation is ready (took ${waited}s to load). Log: $DATA/speakd.log"
       return
     fi
     sleep 2; waited=$((waited + 2))
@@ -167,12 +167,39 @@ start_daemon() {
 
 check_prereqs
 install_runtime
+migrate_old_install() {
+  local rc=0
+  bash "$ROOT/scripts/migrate.sh" "$DATA" || rc=$?
+  case "$rc" in
+    0) MIGRATED=0 ;;
+    10) MIGRATED=1 ;;
+    *) fail "taking over the claude-speak install failed (exit $rc)" ;;
+  esac
+}
+
+# An old install with voice input gets it back: the Whisper folder came over with the settings.
+restore_voice_input() {
+  [ "$MIGRATED" = 1 ] && [ -f "$DATA/models/whisper/config.json" ] || return 0
+  [ "$(tr -d '[:space:]' < "$DATA/hotkey" 2>/dev/null)" = "off" ] && return 0
+  check_voice_input
+  install_hotkey
+}
+
+finish_migration() {
+  [ "$MIGRATED" = 1 ] || return 0
+  step "now remove the old plugin: claude plugin uninstall claude-speak@claude-speak"
+  step "and its marketplace: claude plugin marketplace remove claude-speak"
+}
+
 case "$MODE" in
   speech)
+    migrate_old_install
     download_models
     install_files
     write_plist
-    start_daemon ;;
+    start_daemon
+    restore_voice_input
+    finish_migration ;;
   input)
     install_whisper
     check_voice_input

@@ -1,4 +1,4 @@
-"""claude-speak daemon: speaks Claude Code replies locally, and transcribes voice input.
+"""voice-conversation daemon: speaks Claude Code replies locally, and transcribes voice input.
 
   POST /speak   Stop-hook JSON payload (last_assistant_message, session_id)
   POST /stop    UserPromptSubmit payload (session_id, prompt); empty body = stop everything
@@ -9,9 +9,9 @@
   GET  /session?tty=X  {"open", "guarded"} for one terminal (fast: scans only that tty)
   GET  /config  voice-input settings
 /guard, and ?tty=X on /speak and /stop (a reply or prompt closes that session's menus), need the
-X-Claude-Speak-Hook header, which a web page can't send to localhost without a CORS preflight.
+X-Voice-Conversation-Hook header, which a web page can't send to localhost without a CORS preflight.
 
-State lives in CLAUDE_SPEAK_HOME (the plugin's data dir). Kokoro (English) stays loaded; OmniVoice
+State lives in VOICE_CONVERSATION_HOME (the plugin's data dir). Kokoro (English) stays loaded; OmniVoice
 (Bosnian) and Whisper load on first use and unload when idle or once no Claude Code session is open.
 """
 
@@ -36,12 +36,12 @@ from settings import (HOME, MIN_SPEED, VOICES_DIR, char_limit, speech_speed, stt
                       unload_minutes)
 from text import CONTROL_MARKER, MERGE_TO, is_bosnian, parse_payload, prepare, split_chunks
 
-NAME, VERSION = "claude-speak", "0.4.0"
-HOST, PORT = "127.0.0.1", int(os.environ.get("CLAUDE_SPEAK_PORT", "8765"))
+NAME, VERSION = "voice-conversation", "0.5.0"
+HOST, PORT = "127.0.0.1", int(os.environ.get("VOICE_CONVERSATION_PORT", "8765"))
 LOG_PATH, LOG_MAX_BYTES = os.path.join(HOME, "speakd.log"), 512 * 1024
 MAX_BODY_BYTES = 20 * 1024 * 1024
 TRANSCRIBE_TIMEOUT_S = 120
-HOOK_HEADER = "X-Claude-Speak-Hook"
+HOOK_HEADER = "X-Voice-Conversation-Hook"
 HOUSEKEEPING_EVERY_S = 30  # session scan + idle sweep
 NO_SESSION_GRACE_S = 60    # /clear and restarts briefly show zero sessions
 

@@ -12,8 +12,8 @@ command -v jq >/dev/null && command -v python3 >/dev/null || { echo "FATAL: need
 PASS=0; FAIL=0
 check() { if [ "$2" = "$3" ]; then PASS=$((PASS + 1)); else FAIL=$((FAIL + 1)); echo "FAIL: $1 (expected '$2', got '$3')"; fi; }
 
-TMP=$(mktemp -d); DATA="$TMP/data"; mkdir -p "$DATA"
-PORT=$((20000 + RANDOM % 20000)); export CLAUDE_SPEAK_PORT=$PORT
+TMP=$(mktemp -d); DATA="$TMP/data"; mkdir -p "$DATA/daemon"  # daemon/: set up, so the hooks post
+PORT=$((20000 + RANDOM % 20000)); export VOICE_CONVERSATION_PORT=$PORT
 LOG="$TMP/requests.log"
 
 # Fake daemon: records "<path> <body>" per request; /health reports home=$DATA.
@@ -25,7 +25,7 @@ class H(http.server.BaseHTTPRequestHandler):
         body = self.rfile.read(int(self.headers.get("Content-Length", 0) or 0)).decode()
         open(log, "a").write(f"{self.path} {body}\n"); self.send_response(204); self.end_headers()
     def do_GET(self):
-        b = json.dumps({"name": "claude-speak", "version": "t", "home": home, "ready": True,
+        b = json.dumps({"name": "voice-conversation", "version": "t", "home": home, "ready": True,
                         "models": {"en": True, "bs": False}, "sessions": ["ttys001", "ttys002"]}).encode()
         self.send_response(200); self.send_header("Content-Length", str(len(b))); self.end_headers(); self.wfile.write(b)
     def log_message(self, *a): pass
@@ -60,12 +60,16 @@ echo '{"last_assistant_message":"hi"}' | CLAUDE_CODE_ENTRYPOINT=sdk-cli CLAUDE_P
 echo '{"prompt":"x"}' | CLAUDE_CODE_ENTRYPOINT=sdk-py CLAUDE_PLUGIN_DATA=$DATA bash "$TTS" stop
 echo '{}' | CLAUDE_CODE_ENTRYPOINT=sdk-py CLAUDE_PLUGIN_DATA=$DATA bash "$TTS" guard
 check "headless sends nothing" "0" "$(requests)"
+FRESH="$TMP/fresh"; mkdir -p "$FRESH"  # installed, /speak setup not run yet
+echo '{"last_assistant_message":"hi"}' | CLAUDE_CODE_ENTRYPOINT=cli CLAUDE_PLUGIN_DATA=$FRESH bash "$TTS" speak
+echo '{"prompt":"x"}' | CLAUDE_CODE_ENTRYPOINT=cli CLAUDE_PLUGIN_DATA=$FRESH bash "$TTS" stop
+check "not set up: sends nothing" "0" "$(requests)"
 touch "$DATA/off"; echo '{"hook_event_name":"Stop","last_assistant_message":"hi"}' | CLAUDE_CODE_ENTRYPOINT=cli CLAUDE_PLUGIN_DATA=$DATA bash "$TTS" speak
 check "muted: no speech, only the guard" "/guard" "$(grep -o '^/[a-z]*' "$LOG" | tr '\n' ' ' | sed 's/ $//')"; rm -f "$DATA/off"
 
 # --- tts.sh with the daemon down: fast, silent, exit 0
 start=$(python3 -c 'import time; print(time.time())')
-out=$(echo '{}' | CLAUDE_CODE_ENTRYPOINT=cli CLAUDE_SPEAK_PORT=1 CLAUDE_PLUGIN_DATA=$DATA bash "$TTS" speak 2>&1); rc=$?
+out=$(echo '{}' | CLAUDE_CODE_ENTRYPOINT=cli VOICE_CONVERSATION_PORT=1 CLAUDE_PLUGIN_DATA=$DATA bash "$TTS" speak 2>&1); rc=$?
 fast=$(python3 -c "import time; print(time.time() - $start < 1.5)")
 check "daemon down: exit 0" "0" "$rc"; check "daemon down: no output" "" "$out"; check "daemon down: fast" "True" "$fast"
 
@@ -123,7 +127,7 @@ for good in right-command fn off right-option; do
   ctl "hotkey $good" >/dev/null
   check "hotkey accepts $good" "$good" "$(cat "$DATA/hotkey")"
 done
-check "hotkey change restarts the helper" "4" "$(grep -c "kickstart -k gui/$(id -u)/com.claude-speak.hotkey" "$TMP/launchctl.log")"
+check "hotkey change restarts the helper" "4" "$(grep -c "kickstart -k gui/$(id -u)/com.voice-conversation.hotkey" "$TMP/launchctl.log")"
 for bad in "hotkey" "hotkey left-option" "hotkey caps" "hotkey fn; touch $TMP/pwned5"; do
   ctl "$bad" >/dev/null
   check "rejects '$bad'" "right-option" "$(cat "$DATA/hotkey")"
@@ -149,13 +153,13 @@ check "status: helper ready" "1" "$(ctl status | grep -c 'language en · ready$'
 check "setup asks for speech setup" "[speak] SETUP" "$(ctl setup)"
 check "setup input asks for input setup" "[speak] SETUP input" "$(ctl 'setup input')"
 check "setup rejects other targets" "0" "$(ctl 'setup bogus' | grep -c '^\[speak\] SETUP')"
-check "status names plugin" "1" "$(ctl status | grep -c '^\[speak\] claude-speak ')"
+check "status names plugin" "1" "$(ctl status | grep -c '^\[speak\] voice-conversation ')"
 check "status sees own daemon" "1" "$(ctl status | grep -c 'service running')"
 check "unknown option" "1" "$(ctl bogus | grep -c 'Unknown option')"
 check "every line marked" "0" "$({ ctl status; ctl bogus; ctl 'limit x'; } 2>&1 | grep -vc '^\[speak\] ')"
 
 # --- replay: reads the session transcript, skips /speak echoes; nothing without a transcript
-SID="0000aaaa-1111-2222-3333-444455556666"; PROJ="$HOME/.claude/projects/claude-speak-test-$$"
+SID="0000aaaa-1111-2222-3333-444455556666"; PROJ="$HOME/.claude/projects/voice-conversation-test-$$"
 mkdir -p "$PROJ"; trap 'kill $FAKE 2>/dev/null; rm -rf "$TMP" "$PROJ"' EXIT
 { echo '{"type":"assistant","message":{"content":[{"type":"text","text":"The real reply."}]}}'
   echo '{"type":"assistant","isSidechain":true,"message":{"content":[{"type":"text","text":"subagent"}]}}'
@@ -193,8 +197,8 @@ if [ -x /usr/libexec/PlistBuddy ]; then
   SH="$TMP/synchome"; SD="$TMP/syncdata"; BIN="$TMP/bin"; KICKS="$TMP/kicks.log"
   mkdir -p "$SH/Library/LaunchAgents" "$SD/daemon/__pycache__" "$BIN"
   printf '#!/bin/sh\necho "$*" >> "%s"\n' "$KICKS" > "$BIN/launchctl"; chmod +x "$BIN/launchctl"
-  plist() { /usr/libexec/PlistBuddy -c "Add :EnvironmentVariables:CLAUDE_SPEAK_HOME string $1" \
-    "$SH/Library/LaunchAgents/com.claude-speak.daemon.plist" >/dev/null; }
+  plist() { /usr/libexec/PlistBuddy -c "Add :EnvironmentVariables:VOICE_CONVERSATION_HOME string $1" \
+    "$SH/Library/LaunchAgents/com.voice-conversation.daemon.plist" >/dev/null; }
   sync_run() { HOME="$SH" PATH="$BIN:$PATH" CLAUDE_PLUGIN_ROOT="$ROOT" CLAUDE_PLUGIN_DATA="$SD" bash "$SYNC"; }
   kicks() { cat "$KICKS" 2>/dev/null | grep -c kickstart; }  # prints 0 before the first call
   plist "$SD"; cp "$ROOT"/daemon/*.py "$SD/daemon/"; echo junk > "$SD/daemon/__pycache__/x.pyc"
@@ -212,18 +216,18 @@ if [ -x /usr/libexec/PlistBuddy ]; then
     check "build-helper: a running build is left alone" "1" \
       "$(HOME="$TMP/buildhome" PATH="$BIN:$PATH" bash "$ROOT/scripts/build-helper.sh" "$TMP/builddata" | grep -c 'another hotkey helper build')"
     rmdir "$TMP/builddata/.hotkey-build.lock"; KB=$(boots)
-    HP="$SH/Library/LaunchAgents/com.claude-speak.hotkey.plist"
+    HP="$SH/Library/LaunchAgents/com.voice-conversation.hotkey.plist"
     /usr/libexec/PlistBuddy -c "Add :ProgramArguments array" -c "Add :ProgramArguments:0 string x" \
       -c "Add :ProgramArguments:1 string $SD" "$HP" >/dev/null
     sync_run
-    check "sync: hotkey helper built" "1" "$(ls "$SH/Applications/Claude Speak Hotkey.app/Contents/MacOS" 2>/dev/null | grep -c ClaudeSpeakHotkey)"
+    check "sync: hotkey helper built" "1" "$(ls "$SH/Applications/Voice Conversation Hotkey.app/Contents/MacOS" 2>/dev/null | grep -c VoiceConversationHotkey)"
     check "sync: hotkey helper started" "$((KB + 1))" "$(boots)"
     sync_run; check "sync: unchanged helper is not rebuilt or restarted" "$((KB + 1))" "$(boots)"
     rm -f "$HP"
   else
     echo "SKIP: 7 hotkey helper checks (no Swift compiler)"
   fi
-  rm "$SH/Library/LaunchAgents/com.claude-speak.daemon.plist"; plist "/some/other/install"
+  rm "$SH/Library/LaunchAgents/com.voice-conversation.daemon.plist"; plist "/some/other/install"
   echo "# old" >> "$SD/daemon/text.py"; sync_run
   check "sync: another install's service is left alone" "1" "$(kicks)"
 else

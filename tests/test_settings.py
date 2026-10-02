@@ -8,22 +8,22 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "daemon"))
 
 
 def load_settings(home: str):
-    os.environ["CLAUDE_SPEAK_HOME"] = home
+    os.environ["VOICE_CONVERSATION_HOME"] = home
     import settings
     return importlib.reload(settings)
 
 
 class SettingsTest(unittest.TestCase):
     def setUp(self):
-        self.saved_home = os.environ.get("CLAUDE_SPEAK_HOME")
+        self.saved_home = os.environ.get("VOICE_CONVERSATION_HOME")
         self.home = tempfile.mkdtemp()
         self.s = load_settings(self.home)
 
     def tearDown(self):
         if self.saved_home is None:
-            os.environ.pop("CLAUDE_SPEAK_HOME", None)
+            os.environ.pop("VOICE_CONVERSATION_HOME", None)
         else:
-            os.environ["CLAUDE_SPEAK_HOME"] = self.saved_home
+            os.environ["VOICE_CONVERSATION_HOME"] = self.saved_home
 
     def write(self, name: str, value: str):
         with open(os.path.join(self.home, name), "w", encoding="utf-8") as f:

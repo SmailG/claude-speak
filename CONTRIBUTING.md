@@ -13,6 +13,7 @@ privately, as described in [SECURITY.md](SECURITY.md). Pull requests use the tem
 | `helper/`, `scripts/build-helper.sh` | The voice-input hotkey helper (Swift app + LaunchAgent): `Gate.swift` holds the testable logic (double tap, where text may go, transcript cleanup) |
 | `skills/speak/SKILL.md`, `scripts/speakctl.sh` | The `/speak` command |
 | `scripts/setup.sh`, `scripts/uninstall.sh` | Install / remove the runtime, models and launchd service |
+| `scripts/migrate.sh` | Takes over an install made under the old name `claude-speak` (called by setup) |
 | `scripts/platform.sh` | Apple Silicon / macOS version / Rosetta checks used by setup |
 | `daemon/` | `speakd.py` (HTTP + MLX worker loop), `engines.py` (load/run Kokoro and OmniVoice), `models.py` (lazy load, idle unload), `sessions.py` (open Claude Code sessions via `ps`), `guard.py` (sessions showing a menu), `stt.py` (Whisper voice input), `settings.py` (the per-user setting files), `player.py` (playback process), `jobs.py` (queueing), `text.py` (cleanup, routing, chunking) |
 
@@ -25,7 +26,7 @@ privately, as described in [SECURITY.md](SECURITY.md). Pull requests use the tem
 - MLX models must load in the thread that generates (GPU streams are thread-local), and playback
   must stay in the separate player process (in-process playback stutters while MLX holds the GIL).
 - Nothing in the daemon may reference `${CLAUDE_PLUGIN_ROOT}`: it changes on every update. The
-  daemon runs from `CLAUDE_SPEAK_HOME` (the plugin data dir).
+  daemon runs from `VOICE_CONVERSATION_HOME` (the plugin data dir).
 
 ## Tests
 

@@ -1,4 +1,4 @@
-# claude-speak
+# voice-conversation
 
 Speaks Claude Code replies aloud with local, offline text-to-speech on Apple Silicon.
 English uses [Kokoro-82M](https://huggingface.co/hexgrad/Kokoro-82M); Bosnian, Croatian and
@@ -11,8 +11,8 @@ Nothing is sent to a cloud service.
 ## Install
 
 ```bash
-claude plugin marketplace add SmailG/claude-speak
-claude plugin install claude-speak@claude-speak
+claude plugin marketplace add SmailG/voice-conversation
+claude plugin install voice-conversation@voice-conversation
 ```
 
 Then, in a Claude Code session:
@@ -29,6 +29,26 @@ Re-running it is safe. When it finishes you hear "Speech is ready."
 `curl`, ~5 GB disk, ~1 GB free memory (~3 GB while the Bosnian voice is loaded). Voice input
 adds ~1.5 GB disk and needs the Xcode Command Line Tools. Intel Macs are not supported: the speech models run on MLX,
 which needs Apple Silicon. Setup also works from a terminal running under Rosetta.
+
+### Coming from claude-speak
+
+This plugin was called `claude-speak` up to 0.4.0; Claude Code now reserves plugin names that start
+with `claude-`. To move over, keeping your settings and the downloaded models:
+
+```bash
+claude plugin marketplace add SmailG/voice-conversation
+claude plugin install voice-conversation@voice-conversation
+```
+
+Start a new session and run `/voice-conversation:speak setup` (plain `/speak` is ambiguous while
+both plugins are installed). Setup stops the old service and hotkey helper, removes the old helper
+app, copies your settings, and starts everything under the new name. With voice input, macOS asks
+again for the helper's permissions, because it is a new app. Then remove the old plugin:
+
+```bash
+claude plugin uninstall claude-speak@claude-speak
+claude plugin marketplace remove claude-speak
+```
 
 ## Use
 
@@ -49,7 +69,7 @@ Replies are spoken automatically once setup is done.
 | `/speak setup` | Install or repair the speech service |
 | `/speak uninstall` | Stop and remove the speech service |
 
-The plugin skill is `/claude-speak:speak`; plain `/speak` works as long as no other command uses that name.
+The plugin skill is `/voice-conversation:speak`; plain `/speak` works as long as no other command uses that name.
 
 ## How it behaves
 
@@ -77,7 +97,7 @@ The plugin skill is `/claude-speak:speak`; plain `/speak` works as long as no ot
 ## Voice input
 
 `/speak setup input` downloads Whisper large-v3-turbo and builds a small helper app,
-`~/Applications/Claude Speak Hotkey.app`, from source on your Mac (it needs the Xcode Command Line
+`~/Applications/Voice Conversation Hotkey.app`, from source on your Mac (it needs the Xcode Command Line
 Tools: `xcode-select --install`). macOS then asks you to allow it:
 
 | Permission | Why |
@@ -117,7 +137,7 @@ Stop hook ──► hooks/tts.sh ──► speakd (launchd, 127.0.0.1:8765) ─�
 UserPromptSubmit ──► tts.sh stop ─┘   generates sentence chunks with MLX   (own process, so
 /speak ──► scripts/speakctl.sh ───┘   while earlier chunks play            generation can't stutter it)
 
-double tap ──► Claude Speak Hotkey ──► records ──► speakd /transcribe (Whisper) ──► types into the tab
+double tap ──► Voice Conversation Hotkey ──► records ──► speakd /transcribe (Whisper) ──► types into the tab
 permission / question hooks ──► tts.sh guard ──► speakd (which sessions show a menu)
 ```
 
@@ -129,12 +149,12 @@ update. Its log is `speakd.log` in that directory.
 
 Replace `voices/voice_bs.wav` (≤10 s of clean speech) and `voices/voice_bs.txt` (its exact
 transcript) in the plugin's data directory, then restart the service:
-`launchctl kickstart -k gui/$(id -u)/com.claude-speak.daemon`. Setup never overwrites them.
+`launchctl kickstart -k gui/$(id -u)/com.voice-conversation.daemon`. Setup never overwrites them.
 
 ## Uninstall
 
 Run `/speak uninstall` first (stops and unregisters the service), then
-`claude plugin uninstall claude-speak`. The models and the `mlx-audio` uv tool are left in place
+`claude plugin uninstall voice-conversation`. The models and the `mlx-audio` uv tool are left in place
 because other tools may use them; `/speak uninstall` prints how to remove them. It removes the
 hotkey helper app, its LaunchAgent and its privacy permissions.
 

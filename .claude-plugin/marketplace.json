@@ -1,5 +1,5 @@
 {
-  "name": "claude-speak",
+  "name": "voice-conversation",
   "description": "Local text-to-speech for Claude Code replies",
   "owner": {
     "name": "SmailG",
@@ -7,7 +7,7 @@
   },
   "plugins": [
     {
-      "name": "claude-speak",
+      "name": "voice-conversation",
       "description": "Speaks Claude Code replies aloud with local, offline text-to-speech on Apple Silicon. /speak replays the last reply.",
       "source": "./"
     }
