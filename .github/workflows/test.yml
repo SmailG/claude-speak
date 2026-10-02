@@ -19,6 +19,8 @@ jobs:
         run: python -m unittest discover -s tests -v
       - name: Shell tests (hooks and /speak against a fake daemon)
         run: bash tests/shell.test.sh
+      - name: Migration from the old plugin name
+        run: bash tests/migrate.test.sh
 
   macos:
     # The sync.sh checks need PlistBuddy, which only exists on macOS.
@@ -34,5 +36,7 @@ jobs:
         run: python -m unittest discover -s tests -v
       - name: Shell tests, including sync.sh and the hotkey helper build
         run: bash tests/shell.test.sh
+      - name: Migration from the old plugin name
+        run: bash tests/migrate.test.sh
       - name: Hotkey helper tests (Swift)
         run: bash tests/helper/run.sh

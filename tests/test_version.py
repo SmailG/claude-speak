@@ -14,7 +14,7 @@ class VersionsInSync(unittest.TestCase):
         with open(os.path.join(ROOT, ".claude-plugin", "plugin.json")) as f:
             plugin_version = json.load(f)["version"]
         with open(os.path.join(ROOT, "daemon", "speakd.py")) as f:
-            daemon_version = re.search(r'NAME, VERSION = "claude-speak", "([^"]+)"', f.read()).group(1)
+            daemon_version = re.search(r'NAME, VERSION = "voice-conversation", "([^"]+)"', f.read()).group(1)
         self.assertEqual(daemon_version, plugin_version)
 
 

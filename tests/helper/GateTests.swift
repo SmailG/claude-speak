@@ -100,7 +100,7 @@ func wavTests() {
 }
 
 func appleScriptTests() {
-    let marker = NSTemporaryDirectory() + "claude-speak-injection-\(getpid())"
+    let marker = NSTemporaryDirectory() + "voice-conversation-injection-\(getpid())"
     let hostile = "\" & (do shell script \"touch \(marker)\") & \"\nend run"
     do {
         let script = try ScriptHandlers(source: "on echo_text(t)\nreturn t\nend echo_text")

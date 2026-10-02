@@ -10,7 +10,7 @@
 SESSION="${2:-}"
 DATA="${3:-${CLAUDE_PLUGIN_DATA:-}}"
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-PORT="${CLAUDE_SPEAK_PORT:-8765}"
+PORT="${VOICE_CONVERSATION_PORT:-8765}"
 DEFAULT_LIMIT=2000   # keep in sync with MAX_CHARS in daemon/settings.py
 MAX_LIMIT=100000
 SPEED_RE='^1(\.([0-2][0-9]?|30?))?$'   # 1.0 .. 1.3, at most two decimals (MIN/MAX_SPEED in settings.py)
@@ -19,7 +19,7 @@ DEFAULT_UNLOAD=10    # keep in sync with DEFAULT_UNLOAD_MIN in daemon/settings.p
 MAX_UNLOAD=1440
 LANG_RE='^(auto|bs|hr|sr|en)$'   # LANGUAGES in daemon/settings.py
 HOTKEY_RE='^(right-option|right-command|fn|off)$'   # Hotkey in helper/Gate.swift
-HOTKEY_AGENT="com.claude-speak.hotkey"
+HOTKEY_AGENT="com.voice-conversation.hotkey"
 VERSION=$(jq -r '.version // "?"' "$ROOT/.claude-plugin/plugin.json" 2>/dev/null)
 
 say() { echo "[speak] $*"; }
@@ -39,7 +39,7 @@ daemon_state() {
   if [ -z "$health" ]; then
     echo "service not running (run /speak setup)"
   elif [ "$home" != "$DATA" ]; then
-    echo "port $PORT is served by another claude-speak install ($home)"
+    echo "port $PORT is served by another voice-conversation install ($home)"
   elif [ "$(printf '%s' "$health" | jq -r .ready)" = "true" ]; then
     echo "service running"
   else
@@ -157,7 +157,7 @@ case "$ACTION" in
           curl -s --max-time 1 -o /dev/null -X POST "http://127.0.0.1:$PORT/stop" 2>/dev/null
           say "Speech OFF (/speak still replays on demand)" ;;
   status) [ -e "$MUTE" ] && s=OFF || s=ON
-          say "claude-speak $VERSION — speech $s — $(limit_state) — $(speed_state) — $(daemon_state)"
+          say "voice-conversation $VERSION — speech $s — $(limit_state) — $(speed_state) — $(daemon_state)"
           mem=$(memory_state); [ -n "$mem" ] && say "$mem — $(unload_state)"
           inp=$(input_state); [ -n "$inp" ] && say "$inp" ;;
   limit)  if [[ "$VALUE" =~ ^[0-9]+$ ]] && [ "$VALUE" -le "$MAX_LIMIT" ]; then

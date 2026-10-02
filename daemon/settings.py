@@ -5,8 +5,8 @@ Each reader falls back to its default when the file is missing or holds garbage.
 
 import os
 
-HOME = os.environ.get("CLAUDE_SPEAK_HOME") or os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-MAX_CHARS = int(os.environ.get("CLAUDE_SPEAK_MAX_CHARS", "2000"))
+HOME = os.environ.get("VOICE_CONVERSATION_HOME") or os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+MAX_CHARS = int(os.environ.get("VOICE_CONVERSATION_MAX_CHARS", "2000"))
 LIMIT_FILE = os.path.join(HOME, "max_chars")  # written by `/speak limit N`; 0 = no limit
 SPEED_FILE = os.path.join(HOME, "speed")      # written by `/speak speed X`
 # Above 1.3 OmniVoice (Bosnian) stops outrunning playback, so speech stalls between chunks,

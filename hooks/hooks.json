@@ -1,5 +1,5 @@
 {
-  "description": "claude-speak: speak replies aloud (Stop), stop speaking when you type (UserPromptSubmit), keep the daemon in sync after updates (SessionStart), and track open permission prompts and questions so voice input never types into one",
+  "description": "voice-conversation: speak replies aloud (Stop), stop speaking when you type (UserPromptSubmit), keep the daemon in sync after updates (SessionStart), and track open permission prompts and questions so voice input never types into one",
   "hooks": {
     "Stop": [
       {

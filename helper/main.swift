@@ -1,7 +1,7 @@
-// Claude Speak Hotkey: double-tap a key (default Right Option) in an iTerm2 or Terminal.app tab
+// Voice Conversation Hotkey: double-tap a key (default Right Option) in an iTerm2 or Terminal.app tab
 // that runs Claude Code, speak, tap once more, and the local transcript lands in the prompt.
-// Elsewhere the key does nothing. Runs as the LaunchAgent com.claude-speak.hotkey:
-//   ClaudeSpeakHotkey <plugin data dir>
+// Elsewhere the key does nothing. Runs as the LaunchAgent com.voice-conversation.hotkey:
+//   VoiceConversationHotkey <plugin data dir>
 // Settings (files in the data dir): hotkey = right-option|right-command|fn|off, autosend = on|off.
 
 import AppKit
@@ -34,7 +34,7 @@ final class Controller {
     init(dataDir: String) {
         self.dataDir = dataDir
         hotkey = Hotkey(setting: Self.setting(dataDir, "hotkey"))
-        daemon = Daemon(port: Int(ProcessInfo.processInfo.environment["CLAUDE_SPEAK_PORT"] ?? "") ?? 8765)
+        daemon = Daemon(port: Int(ProcessInfo.processInfo.environment["VOICE_CONVERSATION_PORT"] ?? "") ?? 8765)
         recorder.onAutoStop = { [weak self] in self?.finishListening() }
     }
 
@@ -131,7 +131,7 @@ final class Controller {
         guard let id = NSWorkspace.shared.frontmostApplication?.bundleIdentifier,
               let app = TerminalApp(rawValue: id), let tty = terminals.frontTTY(app) else { return }
         guard let tab = daemon.tab(tty) else {
-            return hud.show("claude-speak: the speech service is not running (or still loading)", for: 3)
+            return hud.show("voice-conversation: the speech service is not running (or still loading)", for: 3)
         }
         guard tab.runsClaude else { return }  // this tab isn't running Claude Code
         guard tab.voiceInput else { return hud.show("Voice input is not set up: run /speak setup input", for: 4) }
@@ -214,7 +214,7 @@ final class Controller {
 }
 
 guard CommandLine.arguments.count == 2 else {
-    print("usage: ClaudeSpeakHotkey <claude-speak data dir>")
+    print("usage: VoiceConversationHotkey <voice-conversation data dir>")
     exit(2)
 }
 let application = NSApplication.shared

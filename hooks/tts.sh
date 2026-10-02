@@ -1,18 +1,21 @@
 #!/bin/bash
-# claude-speak hook: forwards hook payloads to the local speakd daemon.
+# voice-conversation hook: forwards hook payloads to the local speakd daemon.
 #   Stop:             tts.sh speak   (stdin = hook JSON: last_assistant_message, session_id)
 #   UserPromptSubmit: tts.sh stop    (stdin = hook JSON: session_id, prompt)
 #   PermissionRequest, PreToolUse (menu tools), PostToolUse(Failure): tts.sh guard
 #     (a menu opened or closed: voice input must not type into it)
 # Never blocks or fails the session: 1 s timeout, always exits 0.
 
-PORT="${CLAUDE_SPEAK_PORT:-8765}"
-HOME_DIR="${CLAUDE_PLUGIN_DATA:-$HOME/.claude/plugins/data/claude-speak}"
+PORT="${VOICE_CONVERSATION_PORT:-8765}"
+HOME_DIR="${CLAUDE_PLUGIN_DATA:-$HOME/.claude/plugins/data/voice-conversation}"
 ACTION="${1:-speak}"
 
 # Headless runs (claude -p, Agent SDK, e.g. background summarizers) report an sdk-*
 # entrypoint; interactive CLI/IDE sessions report cli, claude-vscode, ...
 case "${CLAUDE_CODE_ENTRYPOINT:-}" in sdk-*) exit 0 ;; esac
+# Not set up yet: stay out of the way of whichever install runs the service (e.g. one installed
+# under the old name claude-speak, until /speak setup takes it over).
+[ -d "$HOME_DIR/daemon" ] || exit 0
 
 # Hooks run without a terminal; the claude process that started them has one.
 claude_tty() {
@@ -27,7 +30,7 @@ claude_tty() {
 
 # The header marks a hook (a web page can't send it to localhost without a CORS preflight).
 post() {
-  curl -s --max-time 1 -o /dev/null -H "X-Claude-Speak-Hook: 1" --data-binary @- \
+  curl -s --max-time 1 -o /dev/null -H "X-Voice-Conversation-Hook: 1" --data-binary @- \
     "http://127.0.0.1:$PORT/$1?tty=$(claude_tty)" 2>/dev/null
 }
 

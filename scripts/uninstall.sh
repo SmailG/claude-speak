@@ -1,15 +1,15 @@
 #!/bin/bash
-# claude-speak uninstall: stop and unregister the speech service. Never deletes models or the
+# voice-conversation uninstall: stop and unregister the speech service. Never deletes models or the
 # runtime (they may be shared); prints how to remove them. The plugin's data dir is removed by
-# `claude plugin uninstall claude-speak`.
+# `claude plugin uninstall voice-conversation`.
 #   uninstall.sh <data_dir>
 
 DATA="${1:-${CLAUDE_PLUGIN_DATA:-}}"
-LABEL="com.claude-speak.daemon"
+LABEL="com.voice-conversation.daemon"
 PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
-HOTKEY="com.claude-speak.hotkey"
+HOTKEY="com.voice-conversation.hotkey"
 HOTKEY_PLIST="$HOME/Library/LaunchAgents/$HOTKEY.plist"
-HOTKEY_APP="${CLAUDE_SPEAK_APP_DIR:-$HOME/Applications}/Claude Speak Hotkey.app"
+HOTKEY_APP="${VOICE_CONVERSATION_APP_DIR:-$HOME/Applications}/Voice Conversation Hotkey.app"
 
 launchctl bootout "gui/$(id -u)/$LABEL" >/dev/null 2>&1 && echo "Stopped the speech service." \
   || echo "Speech service was not running."
@@ -24,7 +24,7 @@ if [ -f "$HOTKEY_PLIST" ] || [ -d "$HOTKEY_APP" ]; then
   echo "Removed the voice-input hotkey helper."
 fi
 [ -n "$DATA" ] && touch "$DATA/off" 2>/dev/null  # hooks stay quiet until you run /speak setup again
-echo "Now run: claude plugin uninstall claude-speak   (removes the plugin and its data dir)"
+echo "Now run: claude plugin uninstall voice-conversation   (removes the plugin and its data dir)"
 echo "Optional, frees ~5 GB (~6.5 GB with voice input): 'uv tool uninstall mlx-audio', and delete these folders in ~/.cache/huggingface/hub:"
 echo "  models--mlx-community--Kokoro-82M-bf16, models--prince-canuma--Kokoro-82M, models--mlx-community--OmniVoice-bfloat16,"
 echo "  and for voice input models--mlx-community--whisper-large-v3-turbo, models--openai--whisper-large-v3-turbo"

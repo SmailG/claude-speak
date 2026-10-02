@@ -1,6 +1,6 @@
 #!/bin/bash
-# Builds the voice-input hotkey helper into ~/Applications/Claude Speak Hotkey.app and keeps its
-# LaunchAgent (com.claude-speak.hotkey) running. Idempotent: rebuilds only when the helper source
+# Builds the voice-input hotkey helper into ~/Applications/Voice Conversation Hotkey.app and keeps its
+# LaunchAgent (com.voice-conversation.hotkey) running. Idempotent: rebuilds only when the helper source
 # changed, because the app is signed ad hoc and macOS ties its permissions (Input Monitoring,
 # Microphone, Automation) to that exact build, so every rebuild means granting them again.
 #   build-helper.sh <data_dir>
@@ -9,13 +9,13 @@ set -euo pipefail
 
 DATA="${1:?usage: build-helper.sh <data_dir>}"
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-NAME="Claude Speak Hotkey"
-APP_DIR="${CLAUDE_SPEAK_APP_DIR:-$HOME/Applications}"
+NAME="Voice Conversation Hotkey"
+APP_DIR="${VOICE_CONVERSATION_APP_DIR:-$HOME/Applications}"
 APP="$APP_DIR/$NAME.app"
-BUNDLE_ID="com.claude-speak.hotkey"
+BUNDLE_ID="com.voice-conversation.hotkey"
 LABEL="$BUNDLE_ID"
 PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
-PORT="${CLAUDE_SPEAK_PORT:-8765}"
+PORT="${VOICE_CONVERSATION_PORT:-8765}"
 BUNDLE_FORMAT=1  # bump when info_plist() changes, so existing installs rebuild
 LOCK="$DATA/.hotkey-build.lock"
 LOCK_STALE_MIN=10
@@ -50,7 +50,7 @@ info_plist() {
 <dict>
   <key>CFBundleIdentifier</key><string>$BUNDLE_ID</string>
   <key>CFBundleName</key><string>$NAME</string>
-  <key>CFBundleExecutable</key><string>ClaudeSpeakHotkey</string>
+  <key>CFBundleExecutable</key><string>VoiceConversationHotkey</string>
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>CFBundleShortVersionString</key><string>$BUNDLE_FORMAT.0</string>
   <key>LSMinimumSystemVersion</key><string>14.0</string>
@@ -72,9 +72,9 @@ agent_plist() {
 <dict>
   <key>Label</key><string>$LABEL</string>
   <key>ProgramArguments</key>
-  <array><string>$APP/Contents/MacOS/ClaudeSpeakHotkey</string><string>$DATA</string></array>
+  <array><string>$APP/Contents/MacOS/VoiceConversationHotkey</string><string>$DATA</string></array>
   <key>EnvironmentVariables</key>
-  <dict><key>CLAUDE_SPEAK_PORT</key><string>$PORT</string></dict>
+  <dict><key>VOICE_CONVERSATION_PORT</key><string>$PORT</string></dict>
   <key>RunAtLoad</key><true/>
   <!-- Stop respawning once the plugin's data dir is gone (plugin uninstalled). -->
   <key>KeepAlive</key>
@@ -98,7 +98,7 @@ build() {
   WORK=$(mktemp -d)
   bundle="$WORK/$NAME.app"
   mkdir -p "$bundle/Contents/MacOS" "$bundle/Contents/Resources"
-  xcrun swiftc -O -o "$bundle/Contents/MacOS/ClaudeSpeakHotkey" "$ROOT"/helper/*.swift
+  xcrun swiftc -O -o "$bundle/Contents/MacOS/VoiceConversationHotkey" "$ROOT"/helper/*.swift
   info_plist > "$bundle/Contents/Info.plist"
   source_hash > "$bundle/Contents/Resources/source-hash"
   codesign --force --sign - --identifier "$BUNDLE_ID" "$bundle" >/dev/null 2>&1
