@@ -94,20 +94,20 @@ lang_state() {
 
 hotkey_state() {
   local v
-  v=$(tr -d '[:space:]' < "$HOTKEY_FILE" 2>/dev/null)
+  v=$(tr -d '[:space:]' 2>/dev/null < "$HOTKEY_FILE")
   [[ "$v" =~ $HOTKEY_RE ]] || v=right-option
   echo "$v"
 }
 
 autosend_state() {
-  [ "$(tr -d '[:space:]' < "$AUTOSEND_FILE" 2>/dev/null)" = "on" ] && echo on || echo off
+  [ "$(tr -d '[:space:]' 2>/dev/null < "$AUTOSEND_FILE")" = "on" ] && echo on || echo off
 }
 
 # "Voice input: double-tap right-option · autosend off · language bs · ready" (only once set up)
 input_state() {
   local lang helper missing
   [ -f "$DATA/models/whisper/config.json" ] || return
-  lang=$(tr -d '[:space:]' < "$LANG_FILE" 2>/dev/null); [[ "$lang" =~ $LANG_RE ]] || lang=auto
+  lang=$(tr -d '[:space:]' 2>/dev/null < "$LANG_FILE"); [[ "$lang" =~ $LANG_RE ]] || lang=auto
   if ! launchctl print "gui/$(id -u)/$HOTKEY_AGENT" >/dev/null 2>&1; then
     helper="hotkey helper not running (run /speak setup input)"
   else

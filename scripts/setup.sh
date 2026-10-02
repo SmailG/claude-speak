@@ -180,7 +180,7 @@ migrate_old_install() {
 # An old install with voice input gets it back: the Whisper folder came over with the settings.
 restore_voice_input() {
   [ "$MIGRATED" = 1 ] && [ -f "$DATA/models/whisper/config.json" ] || return 0
-  [ "$(tr -d '[:space:]' < "$DATA/hotkey" 2>/dev/null)" = "off" ] && return 0
+  [ "$(tr -d '[:space:]' 2>/dev/null < "$DATA/hotkey")" = "off" ] && return 0
   check_voice_input
   install_hotkey
 }
